@@ -297,6 +297,13 @@ function hello() void {
 
 `link "module.tt";` จะ resolve relative กับ directory ของไฟล์ `.tt` ที่กำลัง compile อยู่ ไม่ใช่ directory ของตัว compiler หรือ current working directory แบบเดิม
 
+นอกจากนี้ยังมีการแยก path ระหว่าง resource ของ compiler กับ project ของผู้ใช้ไว้ชัดเจนดังนี้:
+
+- `MotherPath` / compiler root : ใช้สำหรับหาไฟล์ที่เป็นของ compiler เอง เช่น `lib_header.json`, `ThaiThonRule.json`
+- `ProjectPath` / project directory : ใช้สำหรับหาไฟล์ที่เป็นของโปรเจกต์ผู้ใช้ เช่น `link "module.tt"`, `lib.json` ใน project, และ source file จาก library ที่อยู่ใน project
+- ถ้า path เป็น relative ใน project code จะ resolve จาก folder ของไฟล์ `.tt` ที่กำลัง compile อยู่
+- ถ้า path เป็น relative ใน compiler-managed resource จะ resolve จาก root ของ compiler
+
 ตัวอย่างโครงสร้าง:
 
 ```text

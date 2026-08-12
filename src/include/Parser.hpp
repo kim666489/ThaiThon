@@ -64,6 +64,7 @@ private:
     vector<Token> tokens;
     fs::path RootPath;
     fs::path MotherPath;
+    fs::path ProjectPath;
     json lib_header;
 
     ModuleWriter writer;
@@ -90,6 +91,7 @@ private:
     // generating code into. Saved/restored around function bodies since
     // ThaiThon has no closures / nested function defs.
     vector<unordered_map<string, VarInfo>> scopes;
+    vector<pair<string, string>> loopLabels; // {continueTarget, endTarget}
 
     struct ClassDef {
         string name;
@@ -150,7 +152,9 @@ private:
         return t.value.is_string() && t.value.get<string>() == v;
     }
     bool atKeyword(const string& v) {
-        return this->current().type == "IDENTIFIER" && currentIsValue(this->tokens[this->pc], v);
+        Token t = this->current();
+        if (t.value.is_string() && t.value.get<string>() == v) return true;
+        return t.type == v;
     }
 
     // ── type helpers ─────────────────────────────────────────────────────
@@ -204,10 +208,11 @@ public:
     Parser(vector<Token> _tokens, fs::path _rootPath, fs::path _projectDir = fs::path())
         : writer("thaithon_module") {
         this->tokens = _tokens;
-        this->RootPath = _rootPath;
-        this->MotherPath = _projectDir.empty() ? _rootPath : _projectDir;
+        this->RootPath = _rootPath.lexically_normal();
+        this->MotherPath = this->RootPath;            // compiler-owned resources live here
+        this->ProjectPath = _projectDir.empty() ? this->RootPath : _projectDir.lexically_normal();
 
-        fs::path libPath = this->RootPath / "lib_header.json";
+        fs::path libPath = this->MotherPath / "lib_header.json";
         ifstream libfile(libPath);
         if (!libfile.is_open()) {
             cout << "[Error] can't open lib header file please check in ThaiThon: " << libPath << endl;
@@ -299,12 +304,16 @@ private:
         if (this->atKeyword("let")) { this->letStmt(false); return; }
         if (this->atKeyword("const")) { this->letStmt(true); return; }
         if (this->atKeyword("if")) { this->ifStmt(); return; }
+        if (this->atKeyword("else")) { this->error("'else' must follow an 'if' block"); }
         if (this->atKeyword("while")) { this->whileStmt(); return; }
         if (this->atKeyword("function")) { this->funcDecl(); return; }
         if (this->atKeyword("class")) { this->classDecl(); return; }
         if (this->atKeyword("return")) { this->returnStmt(); return; }
+        if (this->atKeyword("continue")) { this->continueStmt(); return; }
+        if (this->atKeyword("pass")) { this->passStmt(); return; }
         if (this->atKeyword("print")) { this->callPrint(false); this->expectSemi(); return; }
         if (this->atKeyword("println")) { this->callPrint(true); this->expectSemi(); return; }
+        if (this->current().type == "COMMENT" || this->current().value == "//" || this->current().value == "/*") { this->advance(); return; }
 
         if (t.type == "IDENTIFIER") {
             Token n1 = this->peekAt(1);
@@ -348,6 +357,21 @@ private:
             this->statements();
         }
         this->advance(); // consume '}'
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    //  comments
+    // ─────────────────────────────────────────────────────────────────
+    void passStmt() {
+        this->advance();
+        this->expectSemi();
+    }
+
+    void continueStmt() {
+        this->advance();
+        this->expectSemi();
+        if (this->loopLabels.empty()) this->error("'continue' can only be used inside a loop");
+        this->writer.emit("br label %" + this->loopLabels.back().first);
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -501,9 +525,11 @@ private:
         this->writer.emit("br i1 " + cond.value + ", label %" + bodyL + ", label %" + endL);
 
         this->writer.emitLabel(bodyL);
+        this->loopLabels.push_back({condL, endL});
         this->pushScope();
         this->block();
         this->popScope();
+        this->loopLabels.pop_back();
         if (!this->writer.lastIsTerminator()) this->writer.emit("br label %" + condL);
 
         this->writer.emitLabel(endL);
@@ -1144,7 +1170,7 @@ private:
         if (this->lib_header[name].contains("source")) {
             for (auto& s : this->lib_header[name]["source"]) {
                 fs::path srcPath = s.get<string>();
-                if (srcPath.is_relative()) srcPath = (this->RootPath / srcPath).lexically_normal();
+                if (srcPath.is_relative()) srcPath = (this->ProjectPath / srcPath).lexically_normal();
                 if (find(this->externSources.begin(), this->externSources.end(), srcPath) == this->externSources.end())
                     this->externSources.push_back(srcPath);
             }
@@ -1166,8 +1192,13 @@ private:
         this->expectSemi();
 
         fs::path linkPath = fs::path(linkPathText);
-        if (linkPath.is_relative()) linkPath = (this->MotherPath / linkPath).lexically_normal();
-        else linkPath = linkPath.lexically_normal();
+        if (linkPath.is_relative()) {
+            // project-local `link` paths resolve relative to the active project
+            // directory, while compiler-owned resources continue to use MotherPath.
+            linkPath = (this->ProjectPath / linkPath).lexically_normal();
+        } else {
+            linkPath = linkPath.lexically_normal();
+        }
         linkPath = fs::absolute(linkPath);
 
         if (!fs::exists(linkPath)) {

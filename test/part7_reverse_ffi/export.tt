@@ -1,0 +1,8 @@
+function add(int a, int b) int {
+    return a + b;
+}
+
+function greet(string name) void {
+    println("Hello from ThaiThon: ");
+    println(name);
+}

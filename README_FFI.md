@@ -69,6 +69,56 @@ that already existed.
    and links both into a single executable. `-target=ir` / `-target=asm`
    still work but won't auto-link extra sources (a warning is printed).
 
+## Reverse FFI: C/C++ calling ThaiThon functions
+
+The compiler also supports the reverse direction: a ThaiThon function is
+emitted as a normal LLVM function definition, so a C/C++ program can link
+against it as long as the symbol is declared with the right ABI.
+
+1. Write the ThaiThon function:
+
+   ```thai
+   function add(int a, int b) int {
+       return a + b;
+   }
+   ```
+
+2. Compile it to LLVM IR or object code:
+
+   ```bash
+   ./bin/thaithon.out -m=c -i=export.tt -target=ir
+   llc -filetype=obj export.ll -o export.o
+   ```
+
+   The function is emitted as a regular LLVM symbol such as:
+
+   ```llvm
+   define i32 @add(i32 %a, i32 %b) {
+   ...
+   }
+   ```
+
+3. Declare it from C++ with `extern "C"` and call it:
+
+   ```cpp
+   extern "C" int add(int a, int b);
+
+   int main() {
+       int x = add(10, 32);
+       return x == 42 ? 0 : 1;
+   }
+   ```
+
+4. Link both objects together:
+
+   ```bash
+   g++ main.cpp export.o -o main
+   ```
+
+This works because ThaiThon function names are emitted in plain LLVM/C
+symbol form, not C++-mangled names. If you use C++ code, you must wrap the
+prototype in `extern "C"` to prevent name mangling.
+
 ## Current limitations (kept intentionally small in scope)
 - Call arguments must be literals (`3`, `"hi"`, `2.5`) — passing a
   ThaiThon *variable* into a linked function isn't wired up yet; this
@@ -79,6 +129,8 @@ that already existed.
 - If a library entry has no `"params"`, the old single-string-argument
   behavior is used unchanged — existing `lib_header.json` files (like a
   `stdio`-only one) keep working with zero edits.
+- For reverse FFI, you need a real LLVM toolchain (`llc`, `clang`, or `opt`)
+  available in the environment when building the final object/binary.
 
 ## Project-local `lib.json` — link libraries without touching the compiler folder
 

@@ -18,7 +18,21 @@
     },
     "lexer": {
         "keyword": {
-            "import":"import"
+            "import":"import",
+            "link":"link",
+            "let":"let",
+            "const":"const",
+            "if":"if",
+            "else":"else",
+            "while":"while",
+            "function":"function",
+            "fn":"function",
+            "class":"class",
+            "return":"return",
+            "print":"print",
+            "println":"println",
+            "continue":"continue",
+            "pass":"pass"
         },
         "operator": {
             "!=": "NEQ",

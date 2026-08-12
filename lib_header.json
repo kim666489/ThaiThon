@@ -9,26 +9,5 @@
         "returns": "i32"
       }
     }
-  },
-
-  "mymath": {
-    "source": ["test/mymath.c"],
-    "libs": ["m"],
-    "declare": [
-      "declare i32 @add_numbers(i32, i32)",
-      "declare double @square_root(double)"
-    ],
-    "functions": {
-      "add": {
-        "symbol": "add_numbers",
-        "returns": "i32",
-        "params": ["i32", "i32"]
-      },
-      "sqrt": {
-        "symbol": "square_root",
-        "returns": "double",
-        "params": ["double"]
-      }
-    }
   }
 }
