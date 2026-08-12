@@ -43,18 +43,19 @@ struct ConfigMapNode {
     string StringValue;
 };
 
-// ---------- ตัวแปร global ----------
 map<string, ConfigMapNode> ConfigMap = {
-    { "debug",    { "bool", true } }, // เปิด debug เป็น true ไว้เริ่มต้น
+    { "debug",    { "bool", true } },
     { "-m",       { "string"     } },
     { "-i",       { "string"     } },
     { "-o",       { "string"     } },
     { "version",  { "string"     } },
-    // ---- ตัวเลือกสำหรับระบบ compile ผ่าน LLVM ----
-    { "-target",  { "string"     } }, // "ir" | "asm" | "exe"  (ค่าเริ่มต้น = "ir")
-    { "-llc",     { "string"     } }, // path/ชื่อ binary ของ llc  (ค่าเริ่มต้น = "llc")
-    { "-clang",   { "string"     } }, // path/ชื่อ binary ของ clang (ค่าเริ่มต้น = "clang")
-    { "-keep-ir", { "bool"       } }  // เก็บไฟล์ .ll ตัวกลางไว้ไหมเมื่อ target != ir (ค่าเริ่มต้น = false)
+    { "-target",  { "string"     } },
+    { "-llc",     { "string"     } },
+    { "-clang",   { "string"     } },
+    { "-keep-ir", { "bool"       } },
+    // ---- NEW: ตัวเลือก optimize LLVM IR ผ่าน `opt` ----
+    { "-opt",     { "string"     } }, // "O0"|"O1"|"O2"|"O3"|"Os"|"Oz" (ค่าเริ่มต้น = "O0" คือไม่ optimize)
+    { "-opt-bin", { "string"     } }  // path/ชื่อ binary ของ opt (ค่าเริ่มต้น = "opt")
 };
 
 fs::path exePath;                 // path ของโฟลเดอร์ exe
@@ -220,6 +221,57 @@ static bool RunShellCommand(const string& cmd) {
 #else
     return rc == 0;
 #endif
+}
+
+// ---------- เช็คว่า opt level ที่ผู้ใช้ส่งมาถูกต้องไหม ----------
+static bool IsValidOptLevel(const string& lvl) {
+    static const vector<string> valid = {"O0","O1","O2","O3","Os","Oz"};
+    return find(valid.begin(), valid.end(), lvl) != valid.end();
+}
+
+// ---------- รัน LLVM `opt` บนไฟล์ .ll เพื่อ optimize ก่อนส่งให้ llc ----------
+// เขียนทับไฟล์ irPath เดิม (in-place) เพื่อไม่ต้องแก้โค้ดส่วนอื่นที่ถือ irPath อยู่แล้ว
+static bool OptimizeIR(const fs::path& irPath, const string& optLevel, const string& optTool) {
+    if (optLevel.empty() || optLevel == "O0") return true; // ไม่ต้อง optimize
+
+    if (!IsValidOptLevel(optLevel)) {
+        cerr << "[Warning] Unknown -opt='" << optLevel
+             << "', skipping optimization. Valid values: O0|O1|O2|O3|Os|Oz" << endl;
+        return true;
+    }
+
+    if (!ToolAvailable(optTool)) {
+        cerr << "[Error] LLVM tool '" << optTool
+             << "' not found in PATH. Install LLVM (opt), pass -opt-bin=<path>, "
+                "or use -opt=O0 to skip optimization." << endl;
+        return false;
+    }
+
+    fs::path tmpPath = irPath;
+    tmpPath += ".opt.tmp";
+
+    cout << "[Info] Optimizing IR with '" << optTool << "' -" << optLevel << "..." << endl;
+    string cmd = "\"" + optTool + "\" -S -" + optLevel + " "
+                 + QuotePath(irPath) + " -o " + QuotePath(tmpPath);
+    if (!RunShellCommand(cmd)) {
+        cerr << "[Error] Optimization failed (opt exited non-zero)." << endl;
+        std::error_code ec;
+        fs::remove(tmpPath, ec);
+        return false;
+    }
+
+    std::error_code ec;
+    fs::rename(tmpPath, irPath, ec);
+    if (ec) {
+        // rename ข้าม filesystem อาจ fail ได้ (เช่น /tmp คนละ mount) ลอง copy+remove แทน
+        fs::copy_file(tmpPath, irPath, fs::copy_options::overwrite_existing, ec);
+        fs::remove(tmpPath, ec);
+        if (ec) {
+            cerr << "[Error] Failed to replace IR file with optimized version: " << ec.message() << endl;
+            return false;
+        }
+    }
+    return true;
 }
 
 // ---------- IR -> Assembly ด้วย llc ----------
@@ -409,12 +461,24 @@ void RunCompiler() {
         fs::path projectDir = fs::absolute(fs::path(inputPath)).parent_path();
         Parser parser(tokens, exePath, projectDir);
         parser.run(irPath);
-        externSources = parser.getExternSources(); // NEW
-        externLibs = parser.getExternLibs();       // NEW
+        externSources = parser.getExternSources();
+        externLibs = parser.getExternLibs();
         cout << "[Info] Wrote LLVM IR to " << irPath << endl;
     } catch (const std::exception& e) {
         cerr << "[Error] Compilation failed: " << e.what() << endl;
         return;
+    }
+
+    // ---- NEW: optimize IR ก่อนไปต่อ (ทำก่อนแตก branch ตาม target เพื่อให้
+    // ผลของ opt สะท้อนออกไฟล์ .ll ทั้งกรณี target=ir/asm/exe) ----
+    {
+        const string optLevel = ConfigMap["-opt"].StringValue;
+        const string optTool  = ConfigMap["-opt-bin"].StringValue.empty()
+                                     ? "opt" : ConfigMap["-opt-bin"].StringValue;
+        if (!OptimizeIR(irPath, optLevel, optTool)) {
+            cerr << "[Error] Aborting due to optimization failure." << endl;
+            return;
+        }
     }
 
     if (target == "ir") {
