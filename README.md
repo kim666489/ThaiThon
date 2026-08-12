@@ -20,12 +20,15 @@ Source (.tt)
 
 - ตัวแปร `let` / `const`
 - `if` / `else` / `while`
+- `continue` และ `pass`
+- comment แบบ `//` และ `/* ... */`
 - ฟังก์ชัน
 - คลาสและ field
 - `import` เพื่อเรียก library
 - `link` เพื่อผนวกไฟล์ ThaiThon อื่น ๆ
 - file I/O, JSON, split, print/input
 - FFI เชื่อมกับ C/C++ ผ่าน `lib_header.json` หรือ `lib.json`
+- reverse FFI: C/C++ สามารถเรียกฟังก์ชันที่ ThaiThon emit ออกมาได้ด้วย `extern "C"`
 
 ## โครงสร้างโปรเจกต์
 
@@ -172,7 +175,41 @@ while (i < 5) {
 }
 ```
 
-### 4. Function
+### 3.1. Continue / Pass
+
+```thai
+let i = 0;
+while (i < 10) {
+    i = i + 1;
+    if (i == 5) {
+        continue;
+    }
+    if (i == 8) {
+        pass;
+    }
+    println(i);
+}
+```
+
+- `continue;` จะ jump กลับไปยัง loop condition
+- `pass;` เป็น statement no-op ที่ใช้เป็น placeholder หรือ “do nothing”
+
+### 4. Comment
+
+```thai
+// single-line comment
+/*
+  block comment
+*/
+
+let x = 1; // inline comment
+```
+
+- รองรับคำสั่ง comment แบบ `// ...`
+- รองรับ block comment แบบ `/* ... */`
+- comment จะถูก lexer/statement parser ข้ามก่อนทำ statement dispatch
+
+### 5. Function
 
 ```thai
 function add(int a, int b) int {
@@ -188,7 +225,7 @@ function greet(string name) void {
 - ตัวอย่างด้านบนแสดง `function` ที่ต้องมี `return` ตามลำดับ
 - ฟังก์ชันต้องถูกประกาศก่อนใช้งานในลำดับโค้ดเดียวกัน
 
-### 5. Class
+### 6. Class
 
 ```thai
 class Point {
@@ -262,6 +299,27 @@ let int sum = mymath.add(10, 20);
 println(sum);
 ```
 
+### Reverse FFI: C/C++ เรียก ThaiThon function
+
+ThaiThon compile แล้ว emit ฟังก์ชันเป็น LLVM symbol ปกติ จึงสามารถถูก C/C++ เรียกผ่าน `extern "C"` ได้ ดังนี้
+
+```thai
+function add(int a, int b) int {
+    return a + b;
+}
+```
+
+```cpp
+extern "C" int add(int a, int b);
+
+int main() {
+    int total = add(10, 32);
+    return total == 42 ? 0 : 1;
+}
+```
+
+> เมื่อใช้ C++ ต้องมี `extern "C"` เพื่อป้องกัน symbol name mangling
+
 รูปแบบการเรียก:
 
 ```thai
@@ -303,6 +361,9 @@ function hello() void {
 - `ProjectPath` / project directory : ใช้สำหรับหาไฟล์ที่เป็นของโปรเจกต์ผู้ใช้ เช่น `link "module.tt"`, `lib.json` ใน project, และ source file จาก library ที่อยู่ใน project
 - ถ้า path เป็น relative ใน project code จะ resolve จาก folder ของไฟล์ `.tt` ที่กำลัง compile อยู่
 - ถ้า path เป็น relative ใน compiler-managed resource จะ resolve จาก root ของ compiler
+- สำหรับ resource ที่เรียกจาก project ของผู้ใช้ ให้ใช้ `exePath` เป็นฐานการค้นหาหากจำเป็น เช่น กรณี runtime หรือ compiler engine ควรใช้ project scope ให้ถูกต้อง แยกออกจาก compiler resource
+
+> สรุปสั้น: compiler resources -> `MotherPath`, user project files -> `ProjectPath`/source-file directory, ไม่ให้ปนกัน
 
 ตัวอย่างโครงสร้าง:
 
