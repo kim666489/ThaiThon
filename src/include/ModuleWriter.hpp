@@ -33,9 +33,20 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 class ModuleWriter {
+private:
+    struct Function {
+        std::string name;
+        std::string retType;
+        std::vector<std::pair<std::string, std::string>> params;
+        std::vector<std::string> body;
+    };
+
 public:
     explicit ModuleWriter(std::string moduleName = "thaithon_module")
-        : moduleName_(std::move(moduleName)) {}
+        : moduleName_(std::move(moduleName)) {
+        functions_.push_back(Function{"main", "i32", {}, {"entry:"}});
+        currentFunctionIndex_ = 0;
+    }
 
     // ── library / import management ─────────────────────────────────────
 
@@ -57,6 +68,63 @@ public:
 
     bool isImported(const std::string& name) const {
         return imported_.count(name) != 0;
+    }
+
+    int mainFunctionIndex() const {
+        return 0;
+    }
+
+    int currentFunctionIndex() const {
+        return currentFunctionIndex_;
+    }
+
+    void setCurrentFunction(int idx) {
+        if (idx < 0 || idx >= static_cast<int>(functions_.size())) {
+            throw std::out_of_range("ModuleWriter::setCurrentFunction: invalid function index");
+        }
+        currentFunctionIndex_ = idx;
+    }
+
+    void beginFunction(const std::string& name, const std::string& retType,
+                       const std::vector<std::pair<std::string, std::string>>& params) {
+        functions_.push_back(Function{name, retType, params, {"entry:"}});
+        currentFunctionIndex_ = static_cast<int>(functions_.size()) - 1;
+    }
+
+    bool lastIsTerminator() const {
+        const auto& body = functions_[currentFunctionIndex_].body;
+        if (body.empty()) return false;
+        const std::string& last = body.back();
+        return last.rfind("ret ", 0) == 0 || last.rfind("br ", 0) == 0;
+    }
+
+    std::string newTemp() {
+        return "%t" + std::to_string(tempCounter_++);
+    }
+
+    std::string newLabel(const std::string& prefix) {
+        return prefix + std::to_string(labelCounter_++);
+    }
+
+    void emitLabel(const std::string& label) {
+        functions_[currentFunctionIndex_].body.push_back(label + ":");
+    }
+
+    void emit(const std::string& instruction) {
+        emitRaw(instruction);
+    }
+
+    void addStruct(const std::string& name, const std::vector<std::string>& fieldTypes) {
+        if (structSet_.count(name)) return;
+        structSet_.insert(name);
+        std::ostringstream out;
+        out << "%" << name << " = type {";
+        for (size_t i = 0; i < fieldTypes.size(); ++i) {
+            if (i) out << ", ";
+            out << fieldTypes[i];
+        }
+        out << "}";
+        structs_.push_back(out.str());
     }
 
     // Adds a raw `declare ...` line if it isn't already present.
@@ -98,7 +166,7 @@ public:
             call << llvmArgs[i];
         }
         call << ")";
-        body_.push_back(call.str());
+        functions_[currentFunctionIndex_].body.push_back(call.str());
     }
 
     // Convenience path for the common `module.function("literal")` shape
@@ -139,10 +207,10 @@ public:
     }
 
     // Escape hatch: drop an already-formatted LLVM instruction straight
-    // into @main's body, for anything the convenience methods above don't
-    // cover yet (arithmetic, branches, etc.).
+    // into the current function's body, for anything the convenience methods
+    // above don't cover yet (arithmetic, branches, etc.).
     void emitRaw(const std::string& instruction) {
-        body_.push_back(instruction);
+        functions_[currentFunctionIndex_].body.push_back(instruction);
     }
 
     // ── output ───────────────────────────────────────────────────────────
@@ -152,13 +220,22 @@ public:
         out << "; ModuleID = '" << moduleName_ << "'\n\n";
         for (auto& d : declares_) out << d << "\n";
         if (!declares_.empty()) out << "\n";
+        for (auto& s : structs_) out << s << "\n";
+        if (!structs_.empty()) out << "\n";
         for (auto& g : globals_) out << g << "\n";
         if (!globals_.empty()) out << "\n";
-        out << "define i32 @main() {\n";
-        out << "entry:\n";
-        for (auto& b : body_) out << "  " << b << "\n";
-        out << "  ret i32 0\n";
-        out << "}\n";
+        for (const auto& func : functions_) {
+            out << "define " << func.retType << " @" << func.name << "(";
+            for (size_t i = 0; i < func.params.size(); ++i) {
+                if (i) out << ", ";
+                out << func.params[i].first << " %" << func.params[i].second;
+            }
+            out << ") {\n";
+            for (const auto& line : func.body) {
+                out << "  " << line << "\n";
+            }
+            out << "}\n\n";
+        }
         return out.str();
     }
 
@@ -188,7 +265,12 @@ private:
     std::vector<std::string> globals_;
     std::unordered_map<std::string, std::string> stringPool_;
     int stringCounter_ = 0;
-    std::vector<std::string> body_;
+    int tempCounter_ = 0;
+    int labelCounter_ = 0;
+    int currentFunctionIndex_ = 0;
+    std::vector<Function> functions_;
+    std::set<std::string> structSet_;
+    std::vector<std::string> structs_;
 };
 
 #endif // MODULE_WRITER

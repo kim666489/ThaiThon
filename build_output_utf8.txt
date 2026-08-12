@@ -1,0 +1,545 @@
+﻿g++ -o ./bin/thaithon.out -I ./src/include ./src/*.cpp -static-libgcc -static-libstdc++ -std=c++17
+make : In file included from ./src/thaithon.cpp:19:
+At line:1 char:35
++ ... /d/Project/part3/ThaiThon; make build > build_output.txt 2>&1; cat bu ...
++                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (In file include...haithon.cpp:19: 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+./src/include/Parser.hpp: In member function 'void Parser::run()':
+./src/include/Parser.hpp:228:22: error: 'class ModuleWriter' has no member 
+named 'setCurrentFunction'
+  228 |         
+this->writer.setCurrentFunction(this->writer.mainFunctionIndex());
+      |                      ^~~~~~~~~~~~~~~~~~
+./src/include/Parser.hpp:228:54: error: 'class ModuleWriter' has no member 
+named 'mainFunctionIndex'
+  228 |         
+this->writer.setCurrentFunction(this->writer.mainFunctionIndex());
+      |                                                      ^~~~~~~~~~~~~~~~~
+./src/include/Parser.hpp:229:27: error: 'class ModuleWriter' has no member 
+named 'lastIsTerminator'
+  229 |         if (!this->writer.lastIsTerminator()) this->writer.emit("ret 
+i32 0");
+      |                           ^~~~~~~~~~~~~~~~
+./src/include/Parser.hpp:229:60: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  229 |         if (!this->writer.lastIsTerminator()) this->writer.emit("ret 
+i32 0");
+      |                                                            ^~~~
+      |                                                            emitRaw
+./src/include/Parser.hpp: In member function 'void Parser::letStmt(bool)':
+./src/include/Parser.hpp:383:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  383 |         this->writer.emit(reg + " = alloca " + finalType);
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp:384:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  384 |         this->writer.emit("store " + finalType + " " + val.value + ", 
+ptr " + reg);
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp: In member function 'void Parser::assignStmt()':
+./src/include/Parser.hpp:400:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  400 |         this->writer.emit("store " + vi->llvmType + " " + val.value + 
+", ptr " + vi->reg);
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp: In member function 'void 
+Parser::fieldAssignStatement()':
+./src/include/Parser.hpp:428:38: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  428 |         string objPtr = this->writer.newTemp();
+      |                                      ^~~~~~~
+./src/include/Parser.hpp:429:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  429 |         this->writer.emit(objPtr + " = load ptr, ptr " + obj->reg);
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp:430:40: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  430 |         string fieldPtr = this->writer.newTemp();
+      |                                        ^~~~~~~
+./src/include/Parser.hpp:431:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  431 |         this->writer.emit(fieldPtr + " = getelementptr %" + 
+obj->className + ", ptr " + objPtr +
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp:433:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  433 |         this->writer.emit("store " + fieldType + " " + val.value + ", 
+ptr " + fieldPtr);
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp: In member function 'void Parser::ifStmt()':
+./src/include/Parser.hpp:448:37: error: 'class ModuleWriter' has no member 
+named 'newLabel'
+  448 |         string thenL = this->writer.newLabel("if_then");
+      |                                     ^~~~~~~~
+./src/include/Parser.hpp:449:37: error: 'class ModuleWriter' has no member 
+named 'newLabel'
+  449 |         string elseL = this->writer.newLabel("if_else");
+      |                                     ^~~~~~~~
+./src/include/Parser.hpp:450:36: error: 'class ModuleWriter' has no member 
+named 'newLabel'
+  450 |         string endL = this->writer.newLabel("if_end");
+      |                                    ^~~~~~~~
+./src/include/Parser.hpp:452:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  452 |         this->writer.emit("br i1 " + cond.value + ", label %" + thenL 
++ ", label %" + elseL);
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp:454:22: error: 'class ModuleWriter' has no member 
+named 'emitLabel'; did you mean 'emitCall'?
+  454 |         this->writer.emitLabel(thenL);
+      |                      ^~~~~~~~~
+      |                      emitCall
+./src/include/Parser.hpp:458:27: error: 'class ModuleWriter' has no member 
+named 'lastIsTerminator'
+  458 |         if (!this->writer.lastIsTerminator()) this->writer.emit("br 
+label %" + endL);
+      |                           ^~~~~~~~~~~~~~~~
+./src/include/Parser.hpp:458:60: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  458 |         if (!this->writer.lastIsTerminator()) this->writer.emit("br 
+label %" + endL);
+      |                                                            ^~~~
+      |                                                            emitRaw
+./src/include/Parser.hpp:460:22: error: 'class ModuleWriter' has no member 
+named 'emitLabel'; did you mean 'emitCall'?
+  460 |         this->writer.emitLabel(elseL);
+      |                      ^~~~~~~~~
+      |                      emitCall
+./src/include/Parser.hpp:471:27: error: 'class ModuleWriter' has no member 
+named 'lastIsTerminator'
+  471 |         if (!this->writer.lastIsTerminator()) this->writer.emit("br 
+label %" + endL);
+      |                           ^~~~~~~~~~~~~~~~
+./src/include/Parser.hpp:471:60: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  471 |         if (!this->writer.lastIsTerminator()) this->writer.emit("br 
+label %" + endL);
+      |                                                            ^~~~
+      |                                                            emitRaw
+./src/include/Parser.hpp:473:22: error: 'class ModuleWriter' has no member 
+named 'emitLabel'; did you mean 'emitCall'?
+  473 |         this->writer.emitLabel(endL);
+      |                      ^~~~~~~~~
+      |                      emitCall
+./src/include/Parser.hpp: In member function 'void Parser::whileStmt()':
+./src/include/Parser.hpp:484:37: error: 'class ModuleWriter' has no member 
+named 'newLabel'
+  484 |         string condL = this->writer.newLabel("while_cond");
+      |                                     ^~~~~~~~
+./src/include/Parser.hpp:485:37: error: 'class ModuleWriter' has no member 
+named 'newLabel'
+  485 |         string bodyL = this->writer.newLabel("while_body");
+      |                                     ^~~~~~~~
+./src/include/Parser.hpp:486:36: error: 'class ModuleWriter' has no member 
+named 'newLabel'
+  486 |         string endL = this->writer.newLabel("while_end");
+      |                                    ^~~~~~~~
+./src/include/Parser.hpp:488:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  488 |         this->writer.emit("br label %" + condL);
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp:489:22: error: 'class ModuleWriter' has no member 
+named 'emitLabel'; did you mean 'emitCall'?
+  489 |         this->writer.emitLabel(condL);
+      |                      ^~~~~~~~~
+      |                      emitCall
+./src/include/Parser.hpp:494:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  494 |         this->writer.emit("br i1 " + cond.value + ", label %" + bodyL 
++ ", label %" + endL);
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp:496:22: error: 'class ModuleWriter' has no member 
+named 'emitLabel'; did you mean 'emitCall'?
+  496 |         this->writer.emitLabel(bodyL);
+      |                      ^~~~~~~~~
+      |                      emitCall
+./src/include/Parser.hpp:500:27: error: 'class ModuleWriter' has no member 
+named 'lastIsTerminator'
+  500 |         if (!this->writer.lastIsTerminator()) this->writer.emit("br 
+label %" + condL);
+      |                           ^~~~~~~~~~~~~~~~
+./src/include/Parser.hpp:500:60: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  500 |         if (!this->writer.lastIsTerminator()) this->writer.emit("br 
+label %" + condL);
+      |                                                            ^~~~
+      |                                                            emitRaw
+./src/include/Parser.hpp:502:22: error: 'class ModuleWriter' has no member 
+named 'emitLabel'; did you mean 'emitCall'?
+  502 |         this->writer.emitLabel(endL);
+      |                      ^~~~~~~~~
+      |                      emitCall
+./src/include/Parser.hpp: In member function 'void Parser::funcDecl()':
+./src/include/Parser.hpp:548:39: error: 'class ModuleWriter' has no member 
+named 'currentFunctionIndex'
+  548 |         int callerFunc = this->writer.currentFunctionIndex();
+      |                                       ^~~~~~~~~~~~~~~~~~~~
+./src/include/Parser.hpp:552:22: error: 'class ModuleWriter' has no member 
+named 'beginFunction'
+  552 |         this->writer.beginFunction(fname, retType, llvmParams);
+      |                      ^~~~~~~~~~~~~
+./src/include/Parser.hpp:560:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  560 |             this->writer.emit(reg + " = alloca " + p.first);
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:561:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  561 |             this->writer.emit("store " + p.first + " %arg_" + p.second 
++ ", ptr " + reg);
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:567:27: error: 'class ModuleWriter' has no member 
+named 'lastIsTerminator'
+  567 |         if (!this->writer.lastIsTerminator()) {
+      |                           ^~~~~~~~~~~~~~~~
+./src/include/Parser.hpp:568:49: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  568 |             if (retType == "void") this->writer.emit("ret void");
+      |                                                 ^~~~
+      |                                                 emitRaw
+./src/include/Parser.hpp:569:31: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  569 |             else this->writer.emit("ret " + retType + " " + 
+defaultValueFor(retType));
+      |                               ^~~~
+      |                               emitRaw
+./src/include/Parser.hpp:574:22: error: 'class ModuleWriter' has no member 
+named 'setCurrentFunction'
+  574 |         this->writer.setCurrentFunction(callerFunc);
+      |                      ^~~~~~~~~~~~~~~~~~
+./src/include/Parser.hpp: In member function 'void Parser::returnStmt()':
+./src/include/Parser.hpp:581:62: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  581 |             if (this->currentRetType == "void") this->writer.emit("ret 
+void");
+      |                                                              ^~~~
+      |                                                              emitRaw
+./src/include/Parser.hpp:582:31: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  582 |             else this->writer.emit("ret " + this->currentRetType + " " 
++ defaultValueFor(this->currentRetType));
+      |                               ^~~~
+      |                               emitRaw
+./src/include/Parser.hpp:589:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  589 |         this->writer.emit("ret " + this->currentRetType + " " + 
+v.value);
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp: In member function 'void Parser::classDecl()':
+./src/include/Parser.hpp:625:22: error: 'class ModuleWriter' has no member 
+named 'addStruct'
+  625 |         this->writer.addStruct(cname, def.fieldTypes);
+      |                      ^~~~~~~~~
+./src/include/Parser.hpp: In member function 'void Parser::callPrint(bool)':
+./src/include/Parser.hpp:646:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  646 |             this->writer.emit("call void @tt_print_newline()");
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp: In member function 'void 
+Parser::emitPrintValue(ExprResult)':
+./src/include/Parser.hpp:653:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  653 |             this->writer.emit("call void @tt_print_i32(i32 " + v.value 
++ ")");
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:656:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  656 |             this->writer.emit("call void @tt_print_i64(i64 " + v.value 
++ ")");
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:659:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  659 |             this->writer.emit("call void @tt_print_double(double " + 
+v.value + ")");
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:661:37: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  661 |             string z = this->writer.newTemp();
+      |                                     ^~~~~~~
+./src/include/Parser.hpp:662:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  662 |             this->writer.emit(z + " = zext i1 " + v.value + " to i8");
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:664:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  664 |             this->writer.emit("call void @tt_print_bool(i8 " + z + 
+")");
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:667:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  667 |             this->writer.emit("call void @tt_print_char(i8 " + v.value 
++ ")");
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:670:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  670 |             this->writer.emit("call void @tt_print_str(ptr " + v.value 
++ ")");
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp: In member function 'Parser::ExprResult 
+Parser::parseUnary()':
+./src/include/Parser.hpp:720:41: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  720 |                 string t = this->writer.newTemp();
+      |                                         ^~~~~~~
+./src/include/Parser.hpp:721:30: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  721 |                 this->writer.emit(t + " = sub i32 0, " + v.value);
+      |                              ^~~~
+      |                              emitRaw
+./src/include/Parser.hpp:725:41: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  725 |                 string t = this->writer.newTemp();
+      |                                         ^~~~~~~
+./src/include/Parser.hpp:726:30: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  726 |                 this->writer.emit(t + " = fsub double 0.0, " + 
+v.value);
+      |                              ^~~~
+      |                              emitRaw
+./src/include/Parser.hpp: In member function 'Parser::ExprResult 
+Parser::parsePrimary()':
+./src/include/Parser.hpp:796:39: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  796 |             string reg = this->writer.newTemp();
+      |                                       ^~~~~~~
+./src/include/Parser.hpp:797:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  797 |             this->writer.emit(reg + " = load " + vi->llvmType + ", ptr 
+" + vi->reg);
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp: In member function 'Parser::ExprResult 
+Parser::parseNewObject()':
+./src/include/Parser.hpp:816:37: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  816 |         string szPtr = this->writer.newTemp();
+      |                                     ^~~~~~~
+./src/include/Parser.hpp:817:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  817 |         this->writer.emit(szPtr + " = getelementptr %" + cname + ", 
+ptr null, i32 1");
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp:818:37: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  818 |         string szInt = this->writer.newTemp();
+      |                                     ^~~~~~~
+./src/include/Parser.hpp:819:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  819 |         this->writer.emit(szInt + " = ptrtoint ptr " + szPtr + " to 
+i64");
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp:820:35: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  820 |         string obj = this->writer.newTemp();
+      |                                   ^~~~~~~
+./src/include/Parser.hpp:821:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  821 |         this->writer.emit(obj + " = call ptr @malloc(i64 " + szInt + 
+")");
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp: In member function 'Parser::ExprResult 
+Parser::parseFieldRead(const std::string&)':
+./src/include/Parser.hpp:840:38: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  840 |         string objPtr = this->writer.newTemp();
+      |                                      ^~~~~~~
+./src/include/Parser.hpp:841:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  841 |         this->writer.emit(objPtr + " = load ptr, ptr " + obj->reg);
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp:842:40: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  842 |         string fieldPtr = this->writer.newTemp();
+      |                                        ^~~~~~~
+./src/include/Parser.hpp:843:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  843 |         this->writer.emit(fieldPtr + " = getelementptr %" + 
+obj->className + ", ptr " + objPtr +
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp:845:35: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  845 |         string val = this->writer.newTemp();
+      |                                   ^~~~~~~
+./src/include/Parser.hpp:846:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  846 |         this->writer.emit(val + " = load " + fieldType + ", ptr " + 
+fieldPtr);
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp: In member function 'Parser::ExprResult 
+Parser::parseCall(const std::string&)':
+./src/include/Parser.hpp:868:63: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  868 |             if (fd.retType != "void") { retReg = 
+this->writer.newTemp(); call << retReg << " = "; }
+      |                                                               ^~~~~~~
+./src/include/Parser.hpp:876:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  876 |             this->writer.emit(call.str());
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:888:64: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  888 |             if (sig.retType != "void") { retReg = 
+this->writer.newTemp(); call << retReg << " = "; }
+      |                                                                ^~~~~~~
+./src/include/Parser.hpp:896:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  896 |             this->writer.emit(call.str());
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp: In member function 'Parser::ExprResult 
+Parser::parseModuleCallExpr(const std::string&)':
+./src/include/Parser.hpp:947:56: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  947 |         if (retType != "void") { retReg = this->writer.newTemp(); call 
+<< retReg << " = "; }
+      |                                                        ^~~~~~~
+./src/include/Parser.hpp:955:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  955 |         this->writer.emit(call.str());
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp: In member function 'Parser::ExprResult 
+Parser::emitArith(const std::string&, ExprResult, ExprResult)':
+./src/include/Parser.hpp:975:37: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  975 |             string r = this->writer.newTemp();
+      |                                     ^~~~~~~
+./src/include/Parser.hpp:976:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  976 |             this->writer.emit(r + " = call ptr @tt_str_concat(ptr " + 
+a.value + ", ptr " + b.value + ")");
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:985:33: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+  985 |         string r = this->writer.newTemp();
+      |                                 ^~~~~~~
+./src/include/Parser.hpp:998:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+  998 |         this->writer.emit(r + " = " + instr + " " + ty + " " + 
+ca.value + ", " + cb.value);
+      |                      ^~~~
+      |                      emitRaw
+./src/include/Parser.hpp: In member function 'Parser::ExprResult 
+Parser::emitComparison(const std::string&, ExprResult, ExprResult)':
+./src/include/Parser.hpp:1011:37: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+ 1011 |             string r = this->writer.newTemp();
+      |                                     ^~~~~~~
+./src/include/Parser.hpp:1012:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+ 1012 |             this->writer.emit(r + " = call i8 @tt_str_eq(ptr " + 
+a.value + ", ptr " + b.value + ")");
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:1013:38: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+ 1013 |             string b8 = this->writer.newTemp();
+      |                                      ^~~~~~~
+./src/include/Parser.hpp:1014:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+ 1014 |             this->writer.emit(b8 + " = icmp " + string(op == "EQ" ? 
+"ne" : "eq") + " i8 " + r + ", 0");
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:1021:33: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+ 1021 |         string r = this->writer.newTemp();
+      |                                 ^~~~~~~
+./src/include/Parser.hpp:1023:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+ 1023 |             this->writer.emit(r + " = icmp " + icmpOp.at(op) + " " + 
+ty + " " + ca.value + ", " + cb.value);
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:1025:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+ 1025 |             this->writer.emit(r + " = fcmp " + fcmpOp.at(op) + " 
+double " + ca.value + ", " + cb.value);
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp: In member function 'Parser::ExprResult 
+Parser::ensureBool(ExprResult)':
+./src/include/Parser.hpp:1040:37: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+ 1040 |             string r = this->writer.newTemp();
+      |                                     ^~~~~~~
+./src/include/Parser.hpp:1041:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+ 1041 |             this->writer.emit(r + " = icmp ne " + v.type + " " + 
+v.value + ", 0");
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp: In member function 'Parser::ExprResult 
+Parser::coerce(ExprResult, const std::string&, const std::string&)':
+./src/include/Parser.hpp:1053:37: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+ 1053 |             string r = this->writer.newTemp();
+      |                                     ^~~~~~~
+./src/include/Parser.hpp:1054:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+ 1054 |             this->writer.emit(r + " = sitofp i32 " + v.value + " to 
+double");
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:1058:37: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+ 1058 |             string r = this->writer.newTemp();
+      |                                     ^~~~~~~
+./src/include/Parser.hpp:1059:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+ 1059 |             this->writer.emit(r + " = zext i1 " + v.value + " to i8");
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:1063:37: error: 'class ModuleWriter' has no member 
+named 'newTemp'
+ 1063 |             string r = this->writer.newTemp();
+      |                                     ^~~~~~~
+./src/include/Parser.hpp:1064:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+ 1064 |             this->writer.emit(r + " = sext i32 " + v.value + " to 
+i64");
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp: In member function 'void Parser::callStatement()':
+./src/include/Parser.hpp:1204:26: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+ 1204 |             this->writer.emit(call.str());
+      |                          ^~~~
+      |                          emitRaw
+./src/include/Parser.hpp:1211:22: error: 'class ModuleWriter' has no member 
+named 'emit'; did you mean 'emitRaw'?
+ 1211 |         this->writer.emit("call " + retType + " @" + symbol + "(ptr " 
++ label + ")");
+      |                      ^~~~
+      |                      emitRaw
+make: *** [build] Error 1
