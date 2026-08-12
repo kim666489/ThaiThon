@@ -62,6 +62,7 @@ private:
     int pc = 0;
     vector<string> import;
     vector<Token> tokens;
+    fs::path RootPath;
     fs::path MotherPath;
     json lib_header;
 
@@ -200,12 +201,13 @@ private:
     }
 
 public:
-    Parser(vector<Token> _tokens, fs::path _path, fs::path _projectDir = fs::path())
+    Parser(vector<Token> _tokens, fs::path _rootPath, fs::path _projectDir = fs::path())
         : writer("thaithon_module") {
         this->tokens = _tokens;
-        this->MotherPath = _path;
+        this->RootPath = _rootPath;
+        this->MotherPath = _projectDir.empty() ? _rootPath : _projectDir;
 
-        fs::path libPath = this->MotherPath / "lib_header.json";
+        fs::path libPath = this->RootPath / "lib_header.json";
         ifstream libfile(libPath);
         if (!libfile.is_open()) {
             cout << "[Error] can't open lib header file please check in ThaiThon: " << libPath << endl;
@@ -1142,7 +1144,7 @@ private:
         if (this->lib_header[name].contains("source")) {
             for (auto& s : this->lib_header[name]["source"]) {
                 fs::path srcPath = s.get<string>();
-                if (srcPath.is_relative()) srcPath = this->MotherPath / srcPath;
+                if (srcPath.is_relative()) srcPath = (this->RootPath / srcPath).lexically_normal();
                 if (find(this->externSources.begin(), this->externSources.end(), srcPath) == this->externSources.end())
                     this->externSources.push_back(srcPath);
             }
@@ -1164,7 +1166,8 @@ private:
         this->expectSemi();
 
         fs::path linkPath = fs::path(linkPathText);
-        if (linkPath.is_relative()) linkPath = this->MotherPath / linkPath;
+        if (linkPath.is_relative()) linkPath = (this->MotherPath / linkPath).lexically_normal();
+        else linkPath = linkPath.lexically_normal();
         linkPath = fs::absolute(linkPath);
 
         if (!fs::exists(linkPath)) {

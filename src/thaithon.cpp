@@ -533,7 +533,11 @@ void RunCompiler() {
 
 int main(int argc, char* args[]) {
     try {
-        exePath = fs::weakly_canonical(fs::absolute(fs::path(args[0]))).parent_path().parent_path();
+        fs::path invoked = fs::path(args[0]);
+        fs::path realExe = fs::weakly_canonical(fs::absolute(invoked));
+        exePath = realExe.parent_path();
+        if (exePath.filename() == "bin") exePath = exePath.parent_path();
+        exePath = exePath.lexically_normal();
     } catch (const std::exception& e) {
         exePath = fs::current_path();
     }
