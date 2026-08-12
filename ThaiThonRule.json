@@ -1,0 +1,188 @@
+{
+    "_config": {
+        "enable_char_type": true,
+        "keep_newline": false,
+        "line_terminator": ";",
+        "stmt_separator": "/",
+        "tab_size": 4
+    },
+    "_error_policy": {
+        "invalid_char": "exit",
+        "rule_not_matched": "warn",
+        "schema_violation": "exit",
+        "type_error": "exit",
+        "unclosed_bracket": "exit",
+        "unclosed_string": "exit",
+        "unknown_operator": "warn",
+        "unknown_token": "exit"
+    },
+    "lexer": {
+        "keyword": {
+            "import":"import"
+        },
+        "operator": {
+            "!=": "NEQ",
+            "*": "MUL",
+            "+": "PLUS",
+            "-": "MINUS",
+            "/": "DIV",
+            "<": "LT",
+            "<=": "LTE",
+            "=": "ASSIGN",
+            "==": "EQ",
+            ">": "GT",
+            ">=": "GTE"
+        },
+        "symbol": {
+            "(": "LPAREN",
+            ")": "RPAREN",
+            ",": "COMMA",
+            ".": "DOT",
+            ":": "COLON",
+            ";": "SEMICOLON",
+            "[": "LBRACKET",
+            "]": "RBRACKET",
+            "{": "LBRACE",
+            "}": "RBRACE"
+        }
+    },
+    "normalizer": {
+        "collect_brackets": {
+            "collectcode": [
+                "LBRACE",
+                "RBRACE"
+            ],
+            "collectexpr": null,
+            "collectfunc": [
+                "LPAREN",
+                "RPAREN"
+            ],
+            "collectlist": [
+                "LBRACKET",
+                "RBRACKET"
+            ],
+            "collectmap": [
+                "LBRACE",
+                "RBRACE"
+            ]
+        },
+        "collect_delimiters": {
+            "collectfunc": {
+                "item_sep": "COMMA"
+            },
+            "collectlist": {
+                "item_sep": "COMMA"
+            },
+            "collectmap": {
+                "item_sep": "COMMA",
+                "kv_sep": "COLON"
+            }
+        },
+        "collect_expr_mode": [
+            "collectint",
+            "collectfloat",
+            "collectdouble",
+            "collectstring",
+            "collectchar",
+            "collectbool",
+            "collectauto",
+            "collectexpr"
+        ],
+        "collect_string_modes": {},
+        "collect_types": {
+            "collect": null,
+            "collectauto": [
+                "INT",
+                "FLOAT",
+                "STRING",
+                "CHAR",
+                "BOOL",
+                "IDENTIFIER",
+                "LBRACKET",
+                "RBRACKET",
+                "LBRACE",
+                "RBRACE",
+                "COMMA",
+                "COLON"
+            ],
+            "collectbool": [
+                "BOOL"
+            ],
+            "collectchar": [
+                "CHAR"
+            ],
+            "collectcode": null,
+            "collectdouble": [
+                "FLOAT",
+                "INT"
+            ],
+            "collectexpr": [
+                "INT",
+                "FLOAT",
+                "STRING",
+                "CHAR",
+                "BOOL",
+                "IDENTIFIER",
+                "PLUS",
+                "MINUS",
+                "MUL",
+                "DIV",
+                "LPAREN",
+                "RPAREN",
+                "EQ",
+                "NEQ",
+                "GT",
+                "LT",
+                "GTE",
+                "LTE"
+            ],
+            "collectfloat": [
+                "FLOAT",
+                "INT"
+            ],
+            "collectfunc": [
+                "INT",
+                "FLOAT",
+                "STRING",
+                "CHAR",
+                "BOOL",
+                "IDENTIFIER",
+                "COMMA",
+                "LPAREN",
+                "RPAREN"
+            ],
+            "collectint": [
+                "INT"
+            ],
+            "collectlist": [
+                "INT",
+                "FLOAT",
+                "STRING",
+                "CHAR",
+                "BOOL",
+                "IDENTIFIER",
+                "COMMA",
+                "LBRACKET",
+                "RBRACKET"
+            ],
+            "collectmap": [
+                "INT",
+                "FLOAT",
+                "STRING",
+                "CHAR",
+                "BOOL",
+                "IDENTIFIER",
+                "COMMA",
+                "COLON",
+                "LBRACE",
+                "RBRACE",
+                "LBRACKET",
+                "RBRACKET"
+            ],
+            "collectstring": [
+                "STRING"
+            ]
+        }
+    },
+    "rules": {}
+}

@@ -1,0 +1,8 @@
+{
+    "debug":false,
+    "-m":"c",
+    "-i":"",
+    "-o":"",
+    "version":"0.0.1",
+    "showToken":false
+}

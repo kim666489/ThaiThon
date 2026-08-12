@@ -1,0 +1,36 @@
+# Test runner for ThaiThon parts
+# Usage:
+#   make -f makefile.test part1
+#   make -f makefile.test part2
+#   make -f makefile.test part3
+#   make -f makefile.test part4
+#   make -f makefile.test part5
+#   make -f makefile.test part6
+#   make -f makefile.test all
+
+BIN := ./bin/thaithon.out
+
+.PHONY: build part1 part2 part3 part4 part5 part6 all
+
+build:
+	$(MAKE) -f makefile build
+
+part1:
+	$(BIN) -m=c -i=./test/part1_basic/hello.tt -target=ir
+
+part2:
+	$(BIN) -m=c -i=./test/part2_stdio/hello.tt -target=ir
+
+part3:
+	$(BIN) -m=c -i=./test/part3_local_lib/program.tt -target=exe
+
+part4:
+	$(BIN) -m=c -i=./test/part4_ffi/program.tt -target=exe
+
+part5:
+	$(BIN) -m=c -i=./test/part5_mixed/program.tt -target=exe
+
+part6:
+	$(BIN) -m=c -i=./test/part6_errors/bad_call.tt -target=ir
+
+all: build part1 part2 part3 part4 part5 part6

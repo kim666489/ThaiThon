@@ -1,0 +1,13 @@
+{
+  "greet": {
+    "source": ["greet.c"],
+    "declare": ["declare void @say_hi(ptr)"],
+    "functions": {
+      "hi": {
+        "symbol": "say_hi",
+        "returns": "void",
+        "params": ["ptr"]
+      }
+    }
+  }
+}
