@@ -1,0 +1,8 @@
+{
+  "greet": {
+    "path": "../lib/greet",
+    "version": "1.0.0",
+    "compilerVersion": "0.0.1",
+    "mode": "project"
+  }
+}
