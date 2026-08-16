@@ -17,6 +17,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 public class ModuleManager {
@@ -29,6 +32,9 @@ public class ModuleManager {
     public static Path ProjectLibFile;
     public static final String COMPILER_NAME = "ThaiThon";
     public static final String DEFAULT_GITHUB_BASE = "https://github.com";
+
+    // BUG-09 fix: hard ceiling on how long any git subprocess may run.
+    private static final long GIT_TIMEOUT_SECONDS = 60;
 
     public static Map<String, String> ConfigMapping = Map.of(
         "-d", "client.config.debug",
@@ -146,8 +152,8 @@ public class ModuleManager {
     public static void printHelp() {
         System.out.println("ThaiThon ModuleManager");
         System.out.println("Usage:");
-        System.out.println("  java -cp ./bin ModuleManager install <module> [version] [--repo=<github-url>] [--mode=permanent|project]");
-        System.out.println("  java -cp ./bin ModuleManager update <module> [version] [--repo=<github-url>]");
+        System.out.println("  java -cp ./bin ModuleManager install <module> [version] --repo=<git-url> [--mode=permanent|project]");
+        System.out.println("  java -cp ./bin ModuleManager update <module> [version] [--repo=<git-url>]");
         System.out.println("  java -cp ./bin ModuleManager uninstall <module>");
         System.out.println("  java -cp ./bin ModuleManager remove <module>");
         System.out.println("  java -cp ./bin ModuleManager search <keyword>");
@@ -158,6 +164,7 @@ public class ModuleManager {
         System.out.println("  - permanent mode installs into <compiler_root>/lib");
         System.out.println("  - project mode installs into <project_root>/lib and updates lib.json");
         System.out.println("  - module metadata must contain version and compilerVersion or compiler.version");
+        System.out.println("  - --repo=<owner/repo or full git URL> is required unless <module> already looks like one");
     }
 
     private static void installModule(List<String> args) throws Exception {
@@ -188,32 +195,46 @@ public class ModuleManager {
         Path targetRoot = "project".equals(mode) ? ProjectRoot.resolve("lib") : CompilerLibDir;
         Files.createDirectories(targetRoot);
 
+        // BUG-01 fix: fetchModuleMetadata's temp clone directory is always
+        // cleaned up in the finally block below, on every code path
+        // (already-installed short circuit included).
         ModuleMetadata metadata = fetchModuleMetadata(name, version, repoUrl);
-        String requiredCompilerVersion = metadata.compilerVersion;
-        if (!requiredCompilerVersion.isEmpty()) {
-            validateCompilerVersion(requiredCompilerVersion, readCompilerVersionFromProject());
-        }
+        try {
+            String requiredCompilerVersion = metadata.compilerVersion;
+            if (!requiredCompilerVersion.isEmpty()) {
+                validateCompilerVersion(requiredCompilerVersion, readCompilerVersionFromProject());
+            }
 
-        Path installDir = targetRoot.resolve(metadata.name);
-        if (Files.exists(installDir)) {
-            if (version == null || version.equals(metadata.version)) {
-                System.out.println("Module already installed: " + metadata.name + " @ " + metadata.version);
+            Path installDir = targetRoot.resolve(metadata.name);
+            if (Files.exists(installDir)) {
+                if (version == null || version.equals(metadata.version)) {
+                    System.out.println("Module already installed: " + metadata.name + " @ " + metadata.version);
+                    if ("project".equals(mode)) {
+                        linkModuleToProject(metadata.name, installDir, metadata.version, requiredCompilerVersion);
+                    }
+                    return;
+                }
+                // BUG-04 fix: swap-then-delete instead of delete-then-copy,
+                // so a failed copy can never leave the module missing.
+                replaceInstalledModule(installDir, metadata);
                 if ("project".equals(mode)) {
                     linkModuleToProject(metadata.name, installDir, metadata.version, requiredCompilerVersion);
                 }
+                System.out.println("Installed module: " + metadata.name + " @ " + metadata.version + " into " + installDir);
                 return;
             }
-            deleteRecursively(installDir);
+
+            copyDirectoryExcludingGit(metadata.sourceDir, installDir);
+            writeModuleIndex(metadata, installDir);
+
+            if ("project".equals(mode)) {
+                linkModuleToProject(metadata.name, installDir, metadata.version, requiredCompilerVersion);
+            }
+
+            System.out.println("Installed module: " + metadata.name + " @ " + metadata.version + " into " + installDir);
+        } finally {
+            cleanupTempDir(metadata);
         }
-
-        copyDirectory(metadata.sourceDir, installDir);
-        writeModuleIndex(metadata, installDir);
-
-        if ("project".equals(mode)) {
-            linkModuleToProject(metadata.name, installDir, metadata.version, requiredCompilerVersion);
-        }
-
-        System.out.println("Installed module: " + metadata.name + " @ " + metadata.version + " into " + installDir);
     }
 
     private static void updateModule(List<String> args) throws Exception {
@@ -236,8 +257,15 @@ public class ModuleManager {
             } else if (isVersionToken(arg)) {
                 version = arg;
             }
+            // NOTE: --mode= is intentionally not parsed here (BUG-12 fix).
+            // We now update the module in place, in whichever root
+            // (compiler-permanent or project-local) it was actually found,
+            // so the caller does not need to (and cannot mistakenly)
+            // redirect an update to the wrong root via --mode=.
         }
 
+        // BUG-03 fix: search both the compiler-permanent lib/ and the
+        // project-local lib/ before giving up.
         Path moduleDir = findInstalledModuleDir(name);
         if (moduleDir == null) {
             System.out.println("Module not found locally: " + name + ". Running install instead.");
@@ -246,14 +274,54 @@ public class ModuleManager {
         }
 
         ModuleMetadata metadata = fetchModuleMetadata(name, version, repoUrl);
-        validateCompilerVersion(metadata.compilerVersion, readCompilerVersionFromProject());
+        try {
+            validateCompilerVersion(metadata.compilerVersion, readCompilerVersionFromProject());
 
-        deleteRecursively(moduleDir);
-        Path installDir = CompilerLibDir.resolve(metadata.name);
-        copyDirectory(metadata.sourceDir, installDir);
-        writeModuleIndex(metadata, installDir);
+            // BUG-12 fix: install back into the same root the module was
+            // actually found in, instead of hard-coding CompilerLibDir.
+            replaceInstalledModule(moduleDir, metadata);
 
-        System.out.println("Updated module: " + metadata.name + " -> " + metadata.version);
+            System.out.println("Updated module: " + metadata.name + " -> " + metadata.version);
+        } finally {
+            cleanupTempDir(metadata);
+        }
+    }
+
+    /**
+     * BUG-04 fix: replaces an installed module directory with a freshly
+     * fetched one without ever leaving the module in a half-deleted state.
+     * The old copy is moved aside first; it is only deleted once the new
+     * copy has been written successfully, and is restored automatically
+     * if anything goes wrong.
+     */
+    private static void replaceInstalledModule(Path installDir, ModuleMetadata metadata) throws IOException {
+        Path backupDir = null;
+        boolean oldMoved = false;
+        try {
+            if (Files.exists(installDir)) {
+                backupDir = installDir.resolveSibling(installDir.getFileName() + ".bak_" + System.nanoTime());
+                Files.move(installDir, backupDir);
+                oldMoved = true;
+            }
+
+            copyDirectoryExcludingGit(metadata.sourceDir, installDir);
+            writeModuleIndex(metadata, installDir);
+
+            if (oldMoved) {
+                deleteRecursively(backupDir);
+            }
+        } catch (IOException e) {
+            // Roll back: if the new copy didn't fully land, restore the backup.
+            try {
+                if (oldMoved && backupDir != null && Files.exists(backupDir)) {
+                    deleteRecursively(installDir);
+                    Files.move(backupDir, installDir);
+                }
+            } catch (IOException rollbackFailure) {
+                e.addSuppressed(rollbackFailure);
+            }
+            throw e;
+        }
     }
 
     private static void removeModule(List<String> args) throws Exception {
@@ -262,6 +330,7 @@ public class ModuleManager {
         }
 
         String name = args.get(0);
+        // BUG-03 fix: search both compiler-permanent and project-local lib/.
         Path moduleDir = findInstalledModuleDir(name);
         if (moduleDir == null) {
             System.out.println("Module not installed: " + name);
@@ -307,6 +376,7 @@ public class ModuleManager {
         }
 
         String name = args.get(0);
+        // BUG-03 fix: search both compiler-permanent and project-local lib/.
         Path installPath = findInstalledModuleDir(name);
         if (installPath == null) {
             throw new IllegalArgumentException("Module not installed: " + name + ". Run install first.");
@@ -323,19 +393,35 @@ public class ModuleManager {
     }
 
     private static void listInstalledModules() throws IOException {
-        if (!Files.exists(CompilerLibDir)) {
+        boolean anyRoot = Files.exists(CompilerLibDir) || Files.exists(ProjectRoot.resolve("lib"));
+        if (!anyRoot) {
             System.out.println("No library folder exists yet: " + CompilerLibDir);
             return;
         }
 
-        try (Stream<Path> stream = Files.list(CompilerLibDir)) {
+        boolean printedAny = false;
+        printedAny |= listModulesUnder(CompilerLibDir, "permanent");
+        Path projectLibDir = ProjectRoot.resolve("lib");
+        if (!projectLibDir.equals(CompilerLibDir)) {
+            printedAny |= listModulesUnder(projectLibDir, "project");
+        }
+
+        if (!printedAny) {
+            System.out.println("No installed modules found under " + CompilerLibDir + " or " + projectLibDir);
+        }
+    }
+
+    private static boolean listModulesUnder(Path root, String label) throws IOException {
+        if (!Files.exists(root)) {
+            return false;
+        }
+        try (Stream<Path> stream = Files.list(root)) {
             List<Path> modules = stream.filter(Files::isDirectory).sorted(Comparator.comparing(path -> path.getFileName().toString())).toList();
             if (modules.isEmpty()) {
-                System.out.println("No installed modules found under " + CompilerLibDir);
-                return;
+                return false;
             }
 
-            System.out.println("Installed modules:");
+            System.out.println("Installed modules (" + label + " @ " + root + "):");
             for (Path p : modules) {
                 Path metadata = p.resolve("module.json");
                 String version = "unknown";
@@ -348,34 +434,119 @@ public class ModuleManager {
                 }
                 System.out.println("  - " + p.getFileName() + " @ " + version);
             }
+            return true;
         }
     }
 
     private static ModuleMetadata fetchModuleMetadata(String moduleName, String requestedVersion, String repoUrl) throws Exception {
         Path tempDir = Files.createTempDirectory("tt_module_");
-        String cloneUrl = repoUrl;
-        if (cloneUrl == null || cloneUrl.isBlank()) {
-            cloneUrl = guessGitHubUrl(moduleName);
+        boolean success = false;
+        try {
+            String cloneUrl = repoUrl;
+            if (cloneUrl == null || cloneUrl.isBlank()) {
+                cloneUrl = guessGitHubUrl(moduleName);
+            }
+
+            // BUG-02 fix: when a specific version is requested we cannot use
+            // a shallow (--depth 1) clone, because that only ever contains
+            // the tip of the default branch and no other tags/branches to
+            // check out. Do a full clone in that case so the requested ref
+            // can actually be resolved.
+            if (requestedVersion != null && !requestedVersion.isBlank()) {
+                runGitCommand(tempDir, "clone", cloneUrl, tempDir.toString());
+            } else {
+                runGitCommand(tempDir, "clone", "--depth", "1", cloneUrl, tempDir.toString());
+            }
+
+            Path repoRoot = findGitRepoRoot(tempDir);
+            if (repoRoot == null) {
+                throw new IllegalArgumentException("Git clone succeeded but repository root could not be resolved for: " + cloneUrl);
+            }
+
+            // BUG-02 fix: actually check out the requested version instead of
+            // just relabeling whatever HEAD happened to contain.
+            if (requestedVersion != null && !requestedVersion.isBlank()) {
+                checkoutRequestedVersion(repoRoot, requestedVersion);
+            }
+
+            Path libJson = findFirstFile(repoRoot, "lib.json");
+            if (libJson == null) {
+                throw new IllegalArgumentException("Repository does not contain lib.json: " + cloneUrl);
+            }
+
+            Json.Node root = Json.parse(Files.readString(libJson, StandardCharsets.UTF_8));
+            ModuleMetadata metadata = parseModuleMetadata(moduleName, requestedVersion, root, repoUrl);
+            metadata.sourceDir = repoRoot;
+            metadata.tempDir = tempDir;
+            success = true;
+            return metadata;
+        } finally {
+            // BUG-01 fix: if anything above failed before we could hand the
+            // temp dir off to the caller, clean it up right away instead of
+            // leaking it. On the success path, the caller (installModule /
+            // updateModule) is responsible for deleting it via
+            // cleanupTempDir() once it has finished copying out of it.
+            if (!success) {
+                try {
+                    deleteRecursively(tempDir);
+                } catch (IOException ignored) {
+                }
+            }
         }
-        if (cloneUrl == null || cloneUrl.isBlank()) {
-            throw new IllegalArgumentException("Module repository URL not provided and could not be guessed for: " + moduleName);
+    }
+
+    /**
+     * BUG-02 fix helper: tries a handful of reasonable ref spellings
+     * ("1.2.3", "v1.2.3") as both tags and branches. Throws a clear error
+     * if none of them resolve, rather than silently keeping whatever ref
+     * the clone happened to check out.
+     */
+    private static void checkoutRequestedVersion(Path repoRoot, String requestedVersion) throws IOException, InterruptedException {
+        String trimmed = requestedVersion.trim();
+        List<String> candidates = new ArrayList<>();
+        candidates.add(trimmed);
+        if (!trimmed.startsWith("v") && !trimmed.startsWith("V")) {
+            candidates.add("v" + trimmed);
+        } else {
+            candidates.add(trimmed.substring(1));
         }
 
-        runGitCommand("clone", "--depth", "1", cloneUrl, tempDir.toString());
-        Path repoRoot = findGitRepoRoot(tempDir);
-        if (repoRoot == null) {
-            throw new IllegalArgumentException("Git clone succeeded but repository root could not be resolved for: " + cloneUrl);
+        for (String ref : candidates) {
+            if (tryCheckout(repoRoot, ref)) {
+                return;
+            }
         }
 
-        Path libJson = findFirstFile(repoRoot, "lib.json");
-        if (libJson == null) {
-            throw new IllegalArgumentException("Repository does not contain lib.json: " + cloneUrl);
-        }
+        throw new IllegalArgumentException(
+            "Requested version \"" + requestedVersion + "\" was not found as a git tag or branch in the module repository. " +
+            "Tried: " + String.join(", ", candidates));
+    }
 
-        Json.Node root = Json.parse(Files.readString(libJson, StandardCharsets.UTF_8));
-        ModuleMetadata metadata = parseModuleMetadata(moduleName, requestedVersion, root, repoUrl);
-        metadata.sourceDir = repoRoot;
-        return metadata;
+    private static boolean tryCheckout(Path repoRoot, String ref) {
+        try {
+            runGitCommand(repoRoot, "checkout", ref);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * BUG-01 fix: deletes the temp clone directory associated with a
+     * ModuleMetadata, if any. Safe to call even if the metadata is null
+     * or the temp dir was already cleaned up.
+     */
+    private static void cleanupTempDir(ModuleMetadata metadata) {
+        if (metadata == null || metadata.tempDir == null) {
+            return;
+        }
+        try {
+            deleteRecursively(metadata.tempDir);
+        } catch (IOException e) {
+            if (debug) {
+                System.err.println("[Warn] Failed to clean up temp directory " + metadata.tempDir + ": " + e.getMessage());
+            }
+        }
     }
 
     private static ModuleMetadata parseModuleMetadata(String moduleName, String requestedVersion, Json.Node root, String repoUrl) {
@@ -390,13 +561,28 @@ public class ModuleManager {
                 moduleKey = root.has("name") ? root.get("name").asString(moduleName) : moduleName;
                 moduleNode = root;
             } else {
+                // BUG-11 fix: only auto-select a fallback entry when it is
+                // unambiguous (exactly one module-like entry present).
+                // Multiple candidates now hard-fail instead of silently
+                // picking the first one, which could install the wrong
+                // module without any warning.
+                List<String> candidates = new ArrayList<>();
                 for (String key : root.keys()) {
                     Json.Node candidate = root.get(key);
                     if (candidate.isObject() && (candidate.has("source") || candidate.has("functions") || candidate.has("declare") || candidate.has("version"))) {
-                        moduleKey = key;
-                        moduleNode = candidate;
-                        break;
+                        candidates.add(key);
                     }
+                }
+                if (candidates.size() == 1) {
+                    moduleKey = candidates.get(0);
+                    moduleNode = root.get(moduleKey);
+                    System.err.println("[Warn] lib.json key \"" + moduleKey + "\" does not match requested module name \"" +
+                        moduleName + "\"; using it because it is the only module-like entry found.");
+                } else if (candidates.size() > 1) {
+                    throw new IllegalArgumentException(
+                        "lib.json defines multiple modules (" + String.join(", ", candidates) +
+                        ") and none match the requested name \"" + moduleName + "\". " +
+                        "Specify the exact module name that matches a key in lib.json.");
                 }
             }
         }
@@ -406,10 +592,31 @@ public class ModuleManager {
         }
 
         String recordedName = safeString(moduleNode.get("name"), moduleKey != null ? moduleKey : moduleName);
-        String versionValue = safeString(moduleNode.get("version"), requestedVersion != null ? requestedVersion : "0.0.0");
+        String declaredVersion = safeString(moduleNode.get("version"), "");
         String compilerVersionValue = resolveCompilerVersion(moduleNode);
-        if (requestedVersion != null && !requestedVersion.isBlank() && !requestedVersion.equals(versionValue)) {
+
+        // BUG-02 fix: the version we record now reflects what was actually
+        // checked out (checkoutRequestedVersion already ran before this is
+        // called, or no specific version was requested at all). We prefer
+        // the version lib.json itself declares for the checked-out ref; we
+        // only fall back to the caller-requested string if lib.json has no
+        // version field to report, and in that case we say so explicitly.
+        String versionValue;
+        if (!declaredVersion.isBlank()) {
+            versionValue = declaredVersion;
+            if (requestedVersion != null && !requestedVersion.isBlank() &&
+                !normalizeVersion(requestedVersion).equals(normalizeVersion(declaredVersion))) {
+                System.err.println("[Warn] Requested version \"" + requestedVersion +
+                    "\" but the checked-out lib.json reports version \"" + declaredVersion +
+                    "\"; using the value from lib.json.");
+            }
+        } else if (requestedVersion != null && !requestedVersion.isBlank()) {
             versionValue = requestedVersion;
+            System.err.println("[Warn] lib.json for module \"" + recordedName +
+                "\" has no version field; recording the requested version \"" + requestedVersion +
+                "\" as-is (unverified).");
+        } else {
+            versionValue = "0.0.0";
         }
 
         ModuleMetadata metadata = new ModuleMetadata();
@@ -496,10 +703,20 @@ public class ModuleManager {
 
     private static List<String> findInstalledMatches(String keyword) throws IOException {
         List<String> result = new ArrayList<>();
-        if (!Files.exists(CompilerLibDir)) {
+        result.addAll(findInstalledMatchesUnder(CompilerLibDir, keyword));
+        Path projectLibDir = ProjectRoot.resolve("lib");
+        if (!projectLibDir.equals(CompilerLibDir)) {
+            result.addAll(findInstalledMatchesUnder(projectLibDir, keyword));
+        }
+        return result;
+    }
+
+    private static List<String> findInstalledMatchesUnder(Path root, String keyword) throws IOException {
+        List<String> result = new ArrayList<>();
+        if (!Files.exists(root)) {
             return result;
         }
-        try (Stream<Path> stream = Files.list(CompilerLibDir)) {
+        try (Stream<Path> stream = Files.list(root)) {
             for (Path p : stream.filter(Files::isDirectory).toList()) {
                 String name = p.getFileName().toString();
                 if (name.toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT))) {
@@ -510,6 +727,13 @@ public class ModuleManager {
         return result;
     }
 
+    /**
+     * BUG-08 fix: no longer guesses a nonexistent central "ThaiThon" GitHub
+     * org. A bare module name (no "/", no scheme) is no longer enough
+     * information to resolve a repository, so we now fail fast with a
+     * clear, actionable error instead of silently building a URL that is
+     * almost guaranteed to 404.
+     */
     private static String guessGitHubUrl(String moduleName) {
         String clean = moduleName.trim();
         String lower = clean.toLowerCase(Locale.ROOT);
@@ -517,9 +741,13 @@ public class ModuleManager {
             return clean;
         }
         if (clean.contains("/")) {
-            return clean.endsWith(".git") ? clean : clean + ".git";
+            // Treat as "owner/repo" shorthand against the default git host.
+            return clean.endsWith(".git") ? (DEFAULT_GITHUB_BASE + "/" + clean) : (DEFAULT_GITHUB_BASE + "/" + clean + ".git");
         }
-        return DEFAULT_GITHUB_BASE + "/ThaiThon/" + clean + ".git";
+        throw new IllegalArgumentException(
+            "Cannot resolve a repository for module \"" + moduleName + "\": no --repo=<url> was given and " +
+            "\"" + moduleName + "\" is not an \"owner/repo\" shorthand or a full git URL. " +
+            "Pass --repo=<git-url> (e.g. --repo=https://github.com/<owner>/" + moduleName + ".git) explicitly.");
     }
 
     private static List<String> searchGitHubRepositories(String keyword) throws Exception {
@@ -550,7 +778,15 @@ public class ModuleManager {
         return names;
     }
 
-    private static void runGitCommand(String... args) throws IOException, InterruptedException {
+    /**
+     * BUG-09 fix: runs a git subprocess with a hard timeout and with
+     * GIT_TERMINAL_PROMPT disabled, so an auth prompt on a private repo
+     * fails fast instead of hanging forever with no feedback.
+     * The command now also accepts a working directory, since checkout
+     * needs to run inside the already-cloned repo rather than cloning
+     * into a fresh temp dir.
+     */
+    private static void runGitCommand(Path workingDir, String... args) throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();
         command.add("git");
         for (String arg : args) {
@@ -558,9 +794,19 @@ public class ModuleManager {
         }
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.redirectErrorStream(true);
+        if (workingDir != null && Files.exists(workingDir)) {
+            builder.directory(workingDir.toFile());
+        }
+        builder.environment().put("GIT_TERMINAL_PROMPT", "0");
+
         Process process = builder.start();
         String output = readProcessOutput(process);
-        int exitCode = process.waitFor();
+        boolean finished = process.waitFor(GIT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+            throw new IOException("Git command timed out after " + GIT_TIMEOUT_SECONDS + "s: git " + String.join(" ", args));
+        }
+        int exitCode = process.exitValue();
         if (exitCode != 0) {
             throw new IOException("Git command failed (exit " + exitCode + "): " + output);
         }
@@ -597,11 +843,31 @@ public class ModuleManager {
         }
     }
 
+    /**
+     * BUG-03 fix: looks in both the compiler-permanent lib/ directory and
+     * the project-local lib/ directory, so uninstall/update/link can find
+     * modules regardless of which mode they were installed with. If a
+     * module of the same name exists in both roots, the project-local copy
+     * takes precedence (it is the one the current project would actually
+     * use), and a warning is printed so the ambiguity is visible.
+     */
     private static Path findInstalledModuleDir(String moduleName) throws IOException {
-        if (!Files.exists(CompilerLibDir)) {
+        Path projectHit = findInstalledModuleDirUnder(ProjectRoot.resolve("lib"), moduleName);
+        Path compilerHit = findInstalledModuleDirUnder(CompilerLibDir, moduleName);
+
+        if (projectHit != null && compilerHit != null) {
+            System.err.println("[Warn] Module \"" + moduleName + "\" is installed both in the project (" +
+                projectHit + ") and permanently (" + compilerHit + "). Using the project-local copy.");
+            return projectHit;
+        }
+        return projectHit != null ? projectHit : compilerHit;
+    }
+
+    private static Path findInstalledModuleDirUnder(Path root, String moduleName) throws IOException {
+        if (root == null || !Files.exists(root)) {
             return null;
         }
-        try (Stream<Path> stream = Files.list(CompilerLibDir)) {
+        try (Stream<Path> stream = Files.list(root)) {
             return stream.filter(Files::isDirectory)
                 .filter(p -> p.getFileName().toString().equalsIgnoreCase(moduleName))
                 .findFirst()
@@ -623,6 +889,17 @@ public class ModuleManager {
         }
     }
 
+    /**
+     * BUG-06 fix: previously this stripped every non-digit/non-dot
+     * character with a single regex pass, which silently glued together
+     * unrelated numeric segments (e.g. "1.0.0-beta1" -> "1.0.01" instead of
+     * "1.0.0"). It also mishandled single-character comparison operators
+     * ("&gt;1.0.0" incorrectly dropped the leading digit because it always
+     * cut 2 characters off, even for a 1-character operator). Both are
+     * fixed below: operators are stripped by their own length, and any
+     * pre-release/build suffix is dropped as a whole instead of being
+     * character-filtered into the numeric part.
+     */
     private static String normalizeVersion(String value) {
         if (value == null) {
             return "";
@@ -631,17 +908,27 @@ public class ModuleManager {
         if (cleaned.startsWith("v") || cleaned.startsWith("V")) {
             cleaned = cleaned.substring(1);
         }
-        if (cleaned.startsWith(">=") || cleaned.startsWith("<=") || cleaned.startsWith("==") || cleaned.startsWith("!=") || cleaned.startsWith(">") || cleaned.startsWith("<")) {
+        if (cleaned.startsWith(">=") || cleaned.startsWith("<=") || cleaned.startsWith("==") || cleaned.startsWith("!=")) {
             cleaned = cleaned.substring(2).trim();
-            if (cleaned.isEmpty()) {
-                return "";
+        } else if (cleaned.startsWith(">") || cleaned.startsWith("<")) {
+            cleaned = cleaned.substring(1).trim();
+        }
+        if (cleaned.isEmpty()) {
+            return "";
+        }
+        // Keep only the leading dotted-numeric run; anything after the
+        // first non [0-9.] character (pre-release tag, build metadata,
+        // stray text) is dropped as a whole rather than filtered
+        // character-by-character.
+        Matcher m = Pattern.compile("^[0-9]+(\\.[0-9]+)*").matcher(cleaned);
+        if (m.find()) {
+            String result = m.group();
+            while (result.endsWith(".")) {
+                result = result.substring(0, result.length() - 1);
             }
+            return result;
         }
-        cleaned = cleaned.replaceAll("[^0-9.]", "");
-        while (cleaned.endsWith(".")) {
-            cleaned = cleaned.substring(0, cleaned.length() - 1);
-        }
-        return cleaned;
+        return "";
     }
 
     private static int compareVersions(String left, String right) {
@@ -672,15 +959,40 @@ public class ModuleManager {
         return "0.0.0";
     }
 
+    /**
+     * BUG-07 fix: the previous implementation always walked exactly three
+     * parent directories up from the code source location, which only
+     * happened to work for one specific "bin/ModuleManager.class" layout
+     * and would silently fall back to the current working directory (with
+     * no warning at all, even in debug mode) for any other layout (e.g.
+     * running from a jar). This version instead walks upward a bounded
+     * number of levels and checks for a much less ambiguous marker
+     * (src/ + config/client.properties, which only the compiler root has),
+     * and it logs a warning when it has to fall back.
+     */
     private static Path detectProjectRoot() {
         try {
-            Path candidate = Paths.get(ModuleManager.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParent().getParent().getParent();
-            if (Files.exists(candidate.resolve("src")) && Files.exists(candidate.resolve("lib"))) {
-                return candidate;
+            Path codeLocation = Paths.get(ModuleManager.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            Path start = Files.isRegularFile(codeLocation) ? codeLocation.getParent() : codeLocation;
+            Path candidate = start;
+            for (int depth = 0; depth < 6 && candidate != null; depth++) {
+                if (looksLikeCompilerRoot(candidate)) {
+                    return candidate;
+                }
+                candidate = candidate.getParent();
             }
         } catch (Exception ignored) {
         }
-        return Paths.get(System.getProperty("user.dir", ".")).toAbsolutePath().normalize();
+
+        Path fallback = Paths.get(System.getProperty("user.dir", ".")).toAbsolutePath().normalize();
+        System.err.println("[Warn] Could not reliably detect the ThaiThon compiler root from the running class location; " +
+            "falling back to the current working directory: " + fallback);
+        return fallback;
+    }
+
+    private static boolean looksLikeCompilerRoot(Path candidate) {
+        return Files.exists(candidate.resolve("src")) &&
+            Files.exists(candidate.resolve("config").resolve("client.properties"));
     }
 
     private static Path findProjectRootFromCwd() {
@@ -698,7 +1010,14 @@ public class ModuleManager {
         return current;
     }
 
-    private static void copyDirectory(Path source, Path target) throws IOException {
+    /**
+     * BUG-05 fix: copyDirectory previously walked and copied the entire
+     * source tree including ".git/", bloating every installed module with
+     * the full clone's object database and risking nested-git-repo issues
+     * if the compiler project itself is version controlled. This variant
+     * skips any path whose relative form starts with ".git".
+     */
+    private static void copyDirectoryExcludingGit(Path source, Path target) throws IOException {
         if (!Files.exists(source)) {
             throw new IOException("Source directory does not exist: " + source);
         }
@@ -706,7 +1025,11 @@ public class ModuleManager {
         try (Stream<Path> stream = Files.walk(source)) {
             for (Path srcFile : stream.toList()) {
                 Path relative = source.relativize(srcFile);
-                Path dest = target.resolve(relative.toString());
+                String relativeStr = relative.toString();
+                if (relativeStr.equals(".git") || relativeStr.startsWith(".git" + java.io.File.separator)) {
+                    continue;
+                }
+                Path dest = target.resolve(relativeStr);
                 if (Files.isDirectory(srcFile)) {
                     Files.createDirectories(dest);
                 } else {
@@ -758,6 +1081,9 @@ public class ModuleManager {
         public String compilerVersion;
         public String repoUrl;
         public Path sourceDir;
+        // BUG-01 fix: tracks the temp clone directory so the caller can
+        // (and must) clean it up once it is done reading from sourceDir.
+        public Path tempDir;
     }
 
     public static boolean is_Digital(String text) {

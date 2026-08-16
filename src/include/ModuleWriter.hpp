@@ -194,15 +194,17 @@ public:
         std::vector<std::string> params =
             fn.value("params", std::vector<std::string>{"ptr"});
 
+        if (params.size() > 1) {
+            std::string msg = funcName + "(): emitStringCall() only supports a single string parameter, but the declared signature has " +
+                              std::to_string(params.size()) + " parameters. No call was emitted.";
+            if (warningOut) {
+                *warningOut = msg;
+            }
+            return false;
+        }
+
         std::string ptrLabel = internString(stringArg);
         emitCall(symbol, retType, {"ptr " + ptrLabel});
-
-        if (params.size() > 1 && warningOut) {
-            *warningOut = funcName + "(): only the string argument was emitted; " +
-                          std::to_string(params.size() - 1) +
-                          " extra declared parameter(s) aren't handled by "
-                          "emitStringCall() yet";
-        }
         return true;
     }
 
