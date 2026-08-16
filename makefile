@@ -18,4 +18,4 @@ build_win:
 run_win:
 	./bin/thaithon.exe $(args)
 
-build_all: build build_win build_client build_server
+build_all: build build_win build_tmi
