@@ -1,4 +1,0 @@
-make run args="-i=./test/program.tt"
-make run args="-i=./test/program.tt -o=./test/program.asm -target=exe"
-make run args="-i=./test/program.tt -o=./test/program.asm -target=ir"
-make run args="-i=./test/program.tt -o=./test/program.asm -target=asm"

@@ -4,4 +4,10 @@ build_output.txt
 build.log
 comma.txt
 tmp_continue.tt
-tmp_export.tt
+tmp_export.tt*.log
+*_output.txt
+*_errors.txt
+comm.txt
+bin/*.class
+bin/*.exe
+bin/*.out
