@@ -253,6 +253,44 @@ print("hello");
 
 `import` จะ read จาก `lib_header.json` ที่อยู่ใน root ของ compiler หรือใน working directory / project directory ตามความเหมาะสม
 
+### สไตล์ C/C++ compatibility สำหรับ include และ namespace call
+
+ThaiThon รองรับรูปแบบตั้งแต่ภาษาภายนอกแบบ C/C++ ที่ใช้กันบ่อยเพื่อความเข้ากันได้โดยไม่ต้องปฏิเสธ syntax เดิมของ ThaiThon ทั้งหมด
+
+```thai
+#include <stdio.h>
+#include "myheader.h"
+import "stdio";
+stdio::puts("hello");
+```
+
+หรือใช้รูปแบบ ThaiThon เดิมแบบที่ยังใช้ได้
+
+```thai
+import "stdio";
+stdio.puts("hello");
+```
+
+สำหรับ library ที่ต้อง include headers แบบ `<>` เช่น `vector`, `map`, หรือ header ของ C/C++ อื่น ๆ จะทำงานได้ในระดับ compatibility ของ compiler คือรับ syntax `#include <...>` และ `#include "..."` ก่อนเข้าสู่กระบวนการ import/library FFI ปกติ
+
+> หมายเหตุ: ThaiThon ยังไม่ใช่ parser แบบเต็มของ C++ ดังนั้น syntax แบบ `std::vector<int> v;` หรือ template syntax แบบ `map<string, int>` จะยังไม่ถูกแปลงเป็น AST/IR ของ C++ แบบเต็ม แต่ compiler สามารถยอมรับ include directive และเรียกฟังก์ชันจาก library ที่ import แล้วได้ตาม style ที่กำหนด
+
+### ฟังก์ชันที่ import จาก library
+
+```thai
+import "stdio";
+stdio::puts("Hello from :: style");
+```
+
+หรือ
+
+```thai
+import "stdio";
+stdio.puts("Hello from dot style");
+```
+
+ทั้งสองรูปแบบให้ผลลัพธ์เท่ากันและสามารถใช้ร่วมกับ library ที่มี metadata ใน `lib_header.json` ได้
+
 ### FFI library schema
 
 `lib_header.json` เป็น registry สำหรับ library ที่ใช้ FFI
