@@ -1,132 +1,218 @@
-# ThaiThon
+# ThaiThon (ไทยธอน)
 
-ThaiThon เป็นภาษาแบบ scripting / imperative ที่คอมไพล์เป็น LLVM IR แล้วสั่งให้ LLVM toolchain สร้าง assembly หรือ executable ต่อไปได้ เอกสารนี้ครอบคลุมหลักการใช้งาน การ build/run, `link`, FFI, และตัวอย่างใช้งานแบบละเอียด
+ThaiThon เป็นภาษาโปรแกรมมิ่งแบบ scripting / imperative ที่ผู้ใช้เขียนโค้ดในไฟล์นามสกุล `.tt` แล้ว compiler (เขียนด้วย C++) จะแปลงเป็น **LLVM IR** ก่อนส่งต่อให้ LLVM toolchain (`llc`, `clang`, `opt`) สร้างเป็น assembly หรือ executable จริงต่อไป ตัวโปรเจกต์ยังมาพร้อมระบบ **FFI** (เรียกโค้ด C/C++ จาก ThaiThon และในทางกลับกัน) และ **ModuleManager** ซึ่งเป็น package manager แบบ Git-based ของตัวเอง
 
-## ภาพรวม
+เอกสารฉบับนี้เป็นการรวบรวมและเรียบเรียงเอกสารทั้งหมดในโปรเจกต์ (`README.md`, `README_FFI.md`, `README_ModuleManager.md`) ให้อยู่ในที่เดียว พร้อมอธิบายโครงสร้างไฟล์จริงในซอร์สโค้ด และตัวอย่างที่ดึงมาจากโฟลเดอร์ `test/` ของ repo โดยตรง
 
-ThaiThon รับ source code ที่มีนามสกุล .tt แล้วผ่านกระบวนการดังนี้
+---
+
+## สารบัญ
+
+1. [ภาพรวมของ compiler pipeline](#ภาพรวมของ-compiler-pipeline)
+2. [โครงสร้างโปรเจกต์](#โครงสร้างโปรเจกต์)
+3. [สิ่งที่ต้องมีก่อน build](#สิ่งที่ต้องมีก่อน-build)
+4. [การ build](#การ-build)
+5. [การรัน compiler และตัวเลือกบรรทัดคำสั่ง](#การรัน-compiler-และตัวเลือกบรรทัดคำสั่ง)
+6. [ไวยากรณ์ภาษา ThaiThon](#ไวยากรณ์ภาษา-thaithon)
+7. [Built-in functions](#built-in-functions)
+8. [ระบบ import และ library (`lib_header.json` / `lib.json`)](#ระบบ-import-และ-library)
+9. [FFI: เรียก C/C++ จาก ThaiThon](#ffi-เรียก-cc-จาก-thaithon)
+10. [Reverse FFI: เรียก ThaiThon จาก C/C++](#reverse-ffi-เรียก-thaithon-จาก-cc)
+11. [คำสั่ง `link`: รวมหลายไฟล์ `.tt`](#คำสั่ง-link-รวมหลายไฟล์-tt)
+12. [ModuleManager: package manager ของ ThaiThon](#modulemanager-package-manager-ของ-thaithon)
+13. [ThaiThonRule.json: การตั้งค่า lexer/normalizer](#thaithonrulejson-การตั้งค่า-lexernormalizer)
+14. [ชุดทดสอบ (`test/`) และ `makefile.test`](#ชุดทดสอบ-test-และ-makefiletest)
+15. [ข้อจำกัดที่ควรรู้](#ข้อจำกัดที่ควรรู้)
+16. [การแก้ปัญหาเบื้องต้น](#การแก้ปัญหาเบื้องต้น)
+17. [License](#license)
+
+---
+
+## ภาพรวมของ compiler pipeline
 
 ```text
 Source (.tt)
-  -> Lexer
-  -> Parser
+  -> Lexer            (ตัดคำตาม ThaiThonRule.json)
+  -> Parser           (สร้าง AST / เก็บ import, link, function, class)
   -> LLVM IR (.ll)
-     -> opt (optional)
-     -> llc (for asm/object)
-     -> clang (for executable)
+     -> opt   (ถ้าระบุ -opt)     : ทำ optimization บน IR
+     -> llc   (ถ้า target=asm)  : IR -> assembly
+     -> clang (ถ้า target=exe)  : IR (+ C/C++ source ที่ link ผ่าน FFI) -> executable
 ```
 
-ภาษาของ ThaiThon มีความคล้าย JavaScript/C-like แบบง่าย ๆ และมีฟีเจอร์พื้นฐาน เช่น
+ภาษาของ ThaiThon มีหน้าตาคล้าย JavaScript/C แบบง่าย ๆ และรองรับฟีเจอร์หลัก ๆ ดังนี้
 
-- ตัวแปร `let` / `const`
-- `if` / `else` / `while`
-- `continue` และ `pass`
+- ตัวแปร `let` / `const` พร้อมระบุ type ได้ (หรือปล่อยให้อนุมานก็ได้)
+- เงื่อนไข `if` / `else if` / `else`
+- ลูป `while` พร้อม `continue` และ `pass`
 - comment แบบ `//` และ `/* ... */`
-- ฟังก์ชัน
-- คลาสและ field
-- `import` เพื่อเรียก library
-- `link` เพื่อผนวกไฟล์ ThaiThon อื่น ๆ
-- file I/O, JSON, split, print/input
-- FFI เชื่อมกับ C/C++ ผ่าน `lib_header.json` หรือ `lib.json`
-- reverse FFI: C/C++ สามารถเรียกฟังก์ชันที่ ThaiThon emit ออกมาได้ด้วย `extern "C"`
+- การประกาศฟังก์ชันแบบมี return type
+- คลาส (field เท่านั้น ยังไม่มี method/inheritance)
+- `import` สำหรับเรียก library (ทั้งจาก compiler และจาก project)
+- `link` สำหรับผนวกไฟล์ ThaiThon อื่นเข้ามาตอน compile
+- File I/O, JSON, string/array helper, print/input
+- FFI สองทาง: ThaiThon เรียก C/C++ ผ่าน `lib_header.json`/`lib.json` และ C/C++ เรียกฟังก์ชัน ThaiThon กลับผ่าน `extern "C"`
+
+---
 
 ## โครงสร้างโปรเจกต์
 
+โครงสร้างไฟล์จริงในซอร์ส (ไม่รวมไฟล์ third-party ใน `src/include/nlohmann`, `src/include/asio`, `src/include/crow.h` ที่เป็น vendored libraries):
+
 ```text
 ThaiThon/
-├─ README.md
-├─ README_FFI.md
-├─ lib_header.json
-├─ ThaiThonRule.json
-├─ makefile
+├─ README.md                     # เอกสารฉบับนี้
+├─ README_FFI.md                 # เอกสาร FFI แบบเจาะลึก (อ้างอิงในหัวข้อ FFI ด้านล่าง)
+├─ README_ModuleManager.md       # เอกสาร ModuleManager แบบเจาะลึก
+├─ lib_header.json               # registry ของ library ระดับ compiler (FFI)
+├─ ThaiThonRule.json             # config ของ lexer/normalizer
+├─ config.json                   # ค่า config เริ่มต้นของ compiler (เวอร์ชัน, flag เริ่มต้น)
+├─ config/
+│  └─ client.properties
+├─ makefile                      # build/run compiler (C++) และ ModuleManager (Java)
+├─ makefile.test                 # test runner สำหรับ test/part1 - part6
 ├─ src/
-│  ├─ thaithon.cpp
+│  ├─ thaithon.cpp               # entry point ของ compiler (C++, parse args, orchestrate LLVM)
+│  ├─ runtime.cpp                # runtime helper ฝั่ง C++
+│  ├─ ModuleManager.java         # ตัว package manager (Java)
+│  ├─ Json.java                  # JSON helper สำหรับ ModuleManager
 │  └─ include/
-│     ├─ Parser.hpp
-│     ├─ ModuleWriter.hpp
-│     ├─ Executor.hpp
-│     ├─ Mono_c11.hpp
-│     └─ ...
+│     ├─ Parser.hpp              # lexer + parser + code generation (LLVM IR)
+│     ├─ ModuleWriter.hpp        # เขียนไฟล์ module/lib.json
+│     ├─ Mono_c11.hpp            # normalizer pipeline
+│     ├─ nlohmann/               # vendored JSON library (nlohmann/json)
+│     ├─ asio/                   # vendored networking library
+│     └─ crow.h                  # vendored micro web framework
 ├─ test/
-│  ├─ part1_basic/
-│  ├─ part2_stdio/
-│  ├─ part3_local_lib/
-│  ├─ part4_ffi/
-│  ├─ part5_mixed/
-│  └─ part6_errors/
-├─ bin/
-└─ ...
+│  ├─ mymath.c                   # ตัวอย่างไฟล์ C สำหรับ FFI
+│  ├─ part1_basic/hello.tt
+│  ├─ part2_stdio/hello.tt
+│  ├─ part3_local_lib/           # program.tt + lib.json + program (binary ที่ build ไว้)
+│  ├─ part4_ffi/                 # program.tt + program (binary)
+│  ├─ part5_mixed/                # program.tt + program (binary)
+│  ├─ part6_errors/bad_call.tt   # ตัวอย่างที่ตั้งใจให้ compile error
+│  ├─ part7_reverse_ffi/         # export.tt + caller.cpp (reverse FFI)
+│  └─ part8_module_manager/      # module_repo/ + project_demo/ สำหรับทดสอบ ModuleManager
+├─ tmp_link/                     # ตัวอย่าง `link` แบบง่าย (main.tt + module.tt)
+└─ bin/                          # ผลลัพธ์การ build (thaithon.out / thaithon.exe / ModuleManager .class)
 ```
 
+> หมายเหตุ: `test/part3_local_lib/program`, `test/part4_ffi/program`, `test/part5_mixed/program` เป็น executable ที่ build ไว้แล้ว ถูก commit ไว้ใน repo เป็นตัวอย่างผลลัพธ์
+
+---
+
+## สิ่งที่ต้องมีก่อน build
+
+| เครื่องมือ | ใช้ทำอะไร | จำเป็นสำหรับ |
+|---|---|---|
+| `g++` (รองรับ C++17) | build ตัว compiler หลัก (`thaithon.out`/`thaithon.exe`) | ทุก target |
+| `clang` | compile IR/แหล่ง C/C++ ที่ link เป็น executable | `-target=exe` |
+| `llc` | แปลง LLVM IR เป็น object/assembly | `-target=asm`, `-target=exe` |
+| `opt` | ทำ optimization บน LLVM IR | เมื่อใช้ `-opt=...` |
+| JDK (`javac`/`java`) | build/run `ModuleManager` | เฉพาะฟีเจอร์ package manager |
+| `git` | ให้ `ModuleManager` clone module จาก remote repo | เฉพาะ `install`/`update` จาก `--repo=` |
+
+ตรวจสอบว่า `clang`, `llc`, `opt` อยู่ใน `PATH` ก่อนใช้งานจริง (ดูหัวข้อ [การแก้ปัญหาเบื้องต้น](#การแก้ปัญหาเบื้องต้น))
+
+---
+
 ## การ build
+
+โปรเจกต์มี `makefile` หลักที่รวม target ไว้ทั้งฝั่ง C++ compiler และฝั่ง Java (`ModuleManager`)
 
 ### Linux / WSL / macOS
 
 ```bash
 cd /path/to/ThaiThon
-make build
+make build          # -> ./bin/thaithon.out
 ```
 
-หรือ build แบบตรง ๆ
+หรือสั่ง g++ ตรง ๆ (เทียบเท่ากับสิ่งที่ makefile เรียก):
 
 ```bash
 g++ -o ./bin/thaithon.out -I ./src/include ./src/*.cpp -static-libgcc -static-libstdc++ -std=c++17
 ```
 
-### Windows PowerShell
+### Windows (PowerShell)
 
 ```powershell
-d:
-cd D:\Project\part3\ThaiThon
-make build
+make build_win       # -> ./bin/thaithon.exe
 ```
 
-หรือใช้ command แบบตรง
+หรือ
 
 ```powershell
 g++ -o .\bin\thaithon.exe -I .\src\include .\src\*.cpp -static-libgcc -static-libstdc++ -std=c++17
 ```
 
-> ต้องมี LLVM tools อยู่ใน PATH ได้แก่ `llc`, `clang`, และ `opt` (ถ้าจะใช้ `-opt`)
-
-## การรัน compiler
-
-### ตัวอย่างสำหรับ target แบบ IR
+### Build ModuleManager (Java)
 
 ```bash
+make build_tmi        # javac -d ./bin ./src/*.java
+```
+
+### Build ทุกอย่างพร้อมกัน
+
+```bash
+make build_all        # build + build_win + build_tmi
+```
+
+### รันผ่าน makefile โดยตรง
+
+```bash
+make run args="-m=c -i=main.tt -target=exe"      # เรียก ./bin/thaithon.out
+make run_win args="-m=c -i=main.tt -target=exe"  # เรียก ./bin/thaithon.exe
+make run_tmi args="install greet --repo=... --mode=project"  # เรียก ModuleManager
+```
+
+---
+
+## การรันคอมไพเลอร์และตัวเลือกบรรทัดคำสั่ง
+
+รูปแบบทั่วไป:
+
+```bash
+./bin/thaithon.out -m=<mode> -i=<input.tt> -target=<ir|asm|exe> [-o=<path>] [-opt=<level>] [-keep-ir=true]
+```
+
+### ตัวอย่าง
+
+```bash
+# compile เป็น LLVM IR (.ll)
 ./bin/thaithon.out -m=c -i=main.tt -target=ir
-```
 
-### ตัวอย่างสำหรับ target แบบ assembly
-
-```bash
+# compile เป็น assembly
 ./bin/thaithon.out -m=c -i=main.tt -target=asm
-```
 
-### ตัวอย่างสำหรับ target แบบ executable
-
-```bash
+# compile เป็น executable
 ./bin/thaithon.out -m=c -i=main.tt -target=exe
-```
 
-### ตัวเลือกเพิ่มเติม
-
-```bash
+# กำหนด output path เอง
 ./bin/thaithon.out -m=c -i=main.tt -target=exe -o=build/app
+
+# เปิด optimization ระดับ O2 บน LLVM IR
 ./bin/thaithon.out -m=c -i=main.tt -target=exe -opt=O2
+
+# เก็บไฟล์ .ll ที่สร้างระหว่าง build ไว้ (ไม่ลบทิ้ง)
 ./bin/thaithon.out -m=c -i=main.tt -target=exe -keep-ir=true
 ```
 
-คำอธิบายตัวเลือก:
+### รายละเอียดตัวเลือก (อ้างอิงตรงจาก `src/thaithon.cpp` และ `config.json`)
 
-- `-m=c` : โหมด compiler (ปัจจุบันใช้ `c` เท่านั้น)
-- `-i=path` : ไฟล์ source .tt ที่จะคอมไพล์
-- `-target=ir|asm|exe` : รูปแบบ output
-- `-o=path` : กำหนด output path
-- `-opt=O0|O1|O2|O3|Os|Oz` : เปิด optimization บน LLVM IR
-- `-keep-ir=true` : เก็บไฟล์ .ll ระหว่างขั้นตอน build ไว้
+| flag | ชนิดค่า | ความหมาย |
+|---|---|---|
+| `-m=c` | string | โหมด compiler (ปัจจุบันรองรับค่า `c` เท่านั้น) |
+| `-i=path` | string | path ของไฟล์ source `.tt` ที่จะ compile |
+| `-target=ir\|asm\|exe` | string | รูปแบบ output ที่ต้องการ |
+| `-o=path` | string | กำหนด output path เอง (ถ้าไม่ระบุจะใช้ค่า default ตามชื่อไฟล์ input) |
+| `-opt=O0\|O1\|O2\|O3\|Os\|Oz` | string | ระดับ optimization ที่ส่งให้ `opt` (ค่าเริ่มต้นคือไม่ optimize) |
+| `-keep-ir=true\|false` | bool | เก็บไฟล์ `.ll` ระหว่างขั้นตอน build ไว้หรือลบทิ้งหลัง build เสร็จ |
 
-## ไวยากรณ์พื้นฐาน
+ค่า default ของบาง flag (`-m`, `-i`, `-o`, `version`, `debug`, `showToken`) ถูกกำหนดไว้ล่วงหน้าใน `config.json` ที่ root ของ compiler
+
+---
+
+## ไวยากรณ์ภาษา ThaiThon
 
 ### 1. Variables
 
@@ -140,15 +226,15 @@ x = x + 5;
 
 - `let` : ตัวแปรที่สามารถเปลี่ยนค่าได้
 - `const` : ตัวแปรคงที่ ไม่ให้ assign ใหม่
-- สามารถเขียน type แบบชัดเจนหรือไม่ชัดเจนได้
-- ประเภทที่รองรับมีดังนี้
+- สามารถระบุ type แบบชัดเจน (`let int y = 20;`) หรือปล่อยให้ compiler อนุมานก็ได้
+- ประเภทที่รองรับ:
   - `int`
   - `float` / `double`
   - `string`
   - `bool`
   - `char`
   - `json`
-  - ชื่อ class ที่กำหนดเอง
+  - ชื่อ class ที่ผู้ใช้กำหนดเอง
 
 ### 2. If / Else
 
@@ -162,8 +248,8 @@ if (x > 0) {
 }
 ```
 
-- เงื่อนไขใช้การเปรียบเทียบแบบเดียว เช่น `==`, `!=`, `<`, `>`, `<=`, `>=`
-- ยังไม่มี `&&` / `||` แบบครบชุดในเวอร์ชันนี้
+- เงื่อนไขใช้ตัวเปรียบเทียบเดี่ยว: `==`, `!=`, `<`, `>`, `<=`, `>=`
+- เวอร์ชันนี้ยังไม่รองรับ `&&` / `||` แบบครบชุด
 
 ### 3. While
 
@@ -175,7 +261,7 @@ while (i < 5) {
 }
 ```
 
-### 3.1. Continue / Pass
+#### 3.1 Continue / Pass
 
 ```thai
 let i = 0;
@@ -191,8 +277,8 @@ while (i < 10) {
 }
 ```
 
-- `continue;` จะ jump กลับไปยัง loop condition
-- `pass;` เป็น statement no-op ที่ใช้เป็น placeholder หรือ “do nothing”
+- `continue;` กระโดดกลับไปเช็คเงื่อนไขของ loop ทันที
+- `pass;` เป็น statement แบบ no-op ใช้เป็น placeholder หรือ "ไม่ทำอะไร"
 
 ### 4. Comment
 
@@ -205,9 +291,7 @@ while (i < 10) {
 let x = 1; // inline comment
 ```
 
-- รองรับคำสั่ง comment แบบ `// ...`
-- รองรับ block comment แบบ `/* ... */`
-- comment จะถูก lexer/statement parser ข้ามก่อนทำ statement dispatch
+comment จะถูก lexer/parser ข้ามก่อนทำการ dispatch statement เสมอ
 
 ### 5. Function
 
@@ -221,9 +305,8 @@ function greet(string name) void {
 }
 ```
 
-- รูปแบบ return type อยู่หลัง parameter list
-- ตัวอย่างด้านบนแสดง `function` ที่ต้องมี `return` ตามลำดับ
-- ฟังก์ชันต้องถูกประกาศก่อนใช้งานในลำดับโค้ดเดียวกัน
+- return type เขียนอยู่หลัง parameter list
+- ฟังก์ชันต้องถูกประกาศไว้ก่อนถูกเรียกใช้ ในลำดับโค้ดเดียวกัน
 
 ### 6. Class
 
@@ -238,62 +321,74 @@ p.x = 10;
 p.y = 20;
 ```
 
-- คลาสมี field อย่างเดียว
-- ไม่มี inheritance, method, constructor แบบครบชุด
-- สามารถส่ง instance เข้า function ได้
+- คลาสมีเฉพาะ field เท่านั้น (ยังไม่มี method, constructor, inheritance)
+- สามารถส่ง instance เข้าฟังก์ชันได้
 
-## การใช้ import และ library
+---
+
+## Built-in functions
+
+### Print / Input
+
+```thai
+print("Hello");
+println("World");
+let name = input("Your name: ");
+```
+
+### File I/O
+
+```thai
+let text = readfile("data.txt");
+writefile("out.txt", "hello");
+```
+
+### String operations
+
+```thai
+let s = "abc";
+let t = strconcat(s, "def");
+println(t);
+```
+
+### Split / Array helpers
+
+```thai
+let arr = split("a,b,c", ",");
+println(arraylen(arr));
+println(arrayget(arr, 1));
+```
+
+### JSON
+
+```thai
+let j = jsonnew();
+jsonsetstring(j, "name", "ThaiThon");
+jsonsetint(j, "age", 5);
+println(jsonstringify(j));
+```
+
+หรืออ่านจากไฟล์:
+
+```thai
+let doc = jsonreadfile("data.json");
+println(jsongetstring(doc, "name"));
+```
+
+---
+
+## ระบบ import และ library
 
 ### import แบบพื้นฐาน
 
 ```thai
 import "stdio";
-print("hello");
+stdio.print("hello");
 ```
 
-`import` จะ read จาก `lib_header.json` ที่อยู่ใน root ของ compiler หรือใน working directory / project directory ตามความเหมาะสม
+`import` จะอ่านจาก `lib_header.json` ที่อยู่ root ของ compiler หรือจาก `lib.json` ใน working directory / project directory (ดูรายละเอียดด้านล่าง)
 
-### สไตล์ C/C++ compatibility สำหรับ include และ namespace call
-
-ThaiThon รองรับรูปแบบตั้งแต่ภาษาภายนอกแบบ C/C++ ที่ใช้กันบ่อยเพื่อความเข้ากันได้โดยไม่ต้องปฏิเสธ syntax เดิมของ ThaiThon ทั้งหมด
-
-```thai
-#include <stdio.h>
-#include "myheader.h"
-import "stdio";
-stdio::puts("hello");
-```
-
-หรือใช้รูปแบบ ThaiThon เดิมแบบที่ยังใช้ได้
-
-```thai
-import "stdio";
-stdio.puts("hello");
-```
-
-สำหรับ library ที่ต้อง include headers แบบ `<>` เช่น `vector`, `map`, หรือ header ของ C/C++ อื่น ๆ จะทำงานได้ในระดับ compatibility ของ compiler คือรับ syntax `#include <...>` และ `#include "..."` ก่อนเข้าสู่กระบวนการ import/library FFI ปกติ
-
-> หมายเหตุ: ThaiThon ยังไม่ใช่ parser แบบเต็มของ C++ ดังนั้น syntax แบบ `std::vector<int> v;` หรือ template syntax แบบ `map<string, int>` จะยังไม่ถูกแปลงเป็น AST/IR ของ C++ แบบเต็ม แต่ compiler สามารถยอมรับ include directive และเรียกฟังก์ชันจาก library ที่ import แล้วได้ตาม style ที่กำหนด
-
-### ฟังก์ชันที่ import จาก library
-
-```thai
-import "stdio";
-stdio::puts("Hello from :: style");
-```
-
-หรือ
-
-```thai
-import "stdio";
-stdio.puts("Hello from dot style");
-```
-
-ทั้งสองรูปแบบให้ผลลัพธ์เท่ากันและสามารถใช้ร่วมกับ library ที่มี metadata ใน `lib_header.json` ได้
-
-### FFI library schema
-
-`lib_header.json` เป็น registry สำหรับ library ที่ใช้ FFI
+### schema ของ `lib_header.json`
 
 ```json
 {
@@ -321,13 +416,14 @@ stdio.puts("Hello from dot style");
 }
 ```
 
-คำอธิบาย:
+คำอธิบายแต่ละ field:
 
-- `declare` : LLVM declare statement
-- `source` : ไฟล์ C/C++ ที่จะ compile แล้ว link ลง executable
-- `libs` : system library ที่ต้อง link เช่น `m`, `pthread`
-- `functions` : map ชื่อฟังก์ชันภายใน ThaiThon กับ symbol จริงใน C/C++
-- `params` : ประเภทของ argument แบบ LLVM เช่น `i32`, `double`, `ptr`
+- `declare` : LLVM `declare` statement ของฟังก์ชันนั้น
+- `source` : ไฟล์ C/C++ ที่จะถูก compile แล้ว link ลง executable (relative กับโฟลเดอร์ของ `lib_header.json`/`lib.json` หรือใช้ absolute path ก็ได้)
+- `libs` : *(optional)* system library ที่ต้อง link ด้วย `-l<name>` เช่น `"m"` สำหรับฟังก์ชันใน `<math.h>` อย่าง `sqrt`/`pow` (บน Linux/WSL อยู่ใน libm ไม่ใช่ libc) หรือ `"pthread"` สำหรับ POSIX threads
+- `functions.<name>.symbol` : ชื่อ symbol จริงในไฟล์ C/C++ (ต้องตรงกับชื่อฟังก์ชันในซอร์ส)
+- `functions.<name>.returns` : ชนิด return แบบ LLVM
+- `functions.<name>.params` : LLVM type ของ argument ตามลำดับ เช่น `ptr` (string), `i1/i8/i16/i32/i64` (integer), `float`, `double`
 
 ### เรียกฟังก์ชันจาก library
 
@@ -337,155 +433,15 @@ let int sum = mymath.add(10, 20);
 println(sum);
 ```
 
-### Reverse FFI: C/C++ เรียก ThaiThon function
-
-ThaiThon compile แล้ว emit ฟังก์ชันเป็น LLVM symbol ปกติ จึงสามารถถูก C/C++ เรียกผ่าน `extern "C"` ได้ ดังนี้
-
-```thai
-function add(int a, int b) int {
-    return a + b;
-}
-```
-
-```cpp
-extern "C" int add(int a, int b);
-
-int main() {
-    int total = add(10, 32);
-    return total == 42 ? 0 : 1;
-}
-```
-
-> เมื่อใช้ C++ ต้องมี `extern "C"` เพื่อป้องกัน symbol name mangling
-
-รูปแบบการเรียก:
-
-```thai
-moduleName.functionName(args...);
-```
-
-และสามารถใช้เป็น expression ได้ด้วย
+รูปแบบการเรียกทั่วไปคือ `moduleName.functionName(args...)` และสามารถใช้เป็น expression ได้เช่นกัน:
 
 ```thai
 let x = mymath.add(3, 4);
 ```
 
-## การ link ไฟล์ ThaiThon หลายไฟล์
+### Project-local `lib.json`
 
-ThaiThon รองรับคำสั่ง `link` เพื่อผนวกไฟล์ `.tt` อื่นเข้ามาในตอน compile
-
-```thai
-import "stdio";
-link "module.tt";
-
-hello();
-```
-
-ไฟล์ `module.tt`
-
-```thai
-function hello() void {
-    println("Hello from module");
-}
-```
-
-### หลักการ resolve path ของ `link`
-
-`link "module.tt";` จะ resolve relative กับ directory ของไฟล์ `.tt` ที่กำลัง compile อยู่ ไม่ใช่ directory ของตัว compiler หรือ current working directory แบบเดิม
-
-นอกจากนี้ยังมีการแยก path ระหว่าง resource ของ compiler กับ project ของผู้ใช้ไว้ชัดเจนดังนี้:
-
-- `MotherPath` / compiler root : ใช้สำหรับหาไฟล์ที่เป็นของ compiler เอง เช่น `lib_header.json`, `ThaiThonRule.json`
-- `ProjectPath` / project directory : ใช้สำหรับหาไฟล์ที่เป็นของโปรเจกต์ผู้ใช้ เช่น `link "module.tt"`, `lib.json` ใน project, และ source file จาก library ที่อยู่ใน project
-- ถ้า path เป็น relative ใน project code จะ resolve จาก folder ของไฟล์ `.tt` ที่กำลัง compile อยู่
-- ถ้า path เป็น relative ใน compiler-managed resource จะ resolve จาก root ของ compiler
-- สำหรับ resource ที่เรียกจาก project ของผู้ใช้ ให้ใช้ `exePath` เป็นฐานการค้นหาหากจำเป็น เช่น กรณี runtime หรือ compiler engine ควรใช้ project scope ให้ถูกต้อง แยกออกจาก compiler resource
-
-> สรุปสั้น: compiler resources -> `MotherPath`, user project files -> `ProjectPath`/source-file directory, ไม่ให้ปนกัน
-
-ตัวอย่างโครงสร้าง:
-
-```text
-project/
-├─ main.tt
-├─ module.tt
-└─ lib.json
-```
-
-ถ้า `main.tt` อยู่ใน `project/` แล้วใช้
-
-```thai
-link "module.tt";
-```
-
-มันจะหาที่ `project/module.tt` โดยอัตโนมัติ
-
-### ตัวอย่างการใช้งานจริง
-
-```thai
-import "stdio";
-link "extra/math.tt";
-
-let x = add(3, 4);
-println(x);
-```
-
-> ชื่อ file ที่ link จะถูก deduplicate อัตโนมัติ ถ้ารวมซ้ำกันแล้วจะไม่โหลดซ้ำ
-
-## Built-in functions
-
-ThaiThon มี built-ins สำหรับงานพื้นฐานที่อยู่ใน runtime
-
-### Print / input
-
-```thai
-print("Hello");
-println("World");
-let name = input("Your name: ");
-```
-
-### File I/O
-
-```thai
-let text = readfile("data.txt");
-writefile("out.txt", "hello");
-```
-
-### String operations
-
-```thai
-let s = "abc";
-let t = strconcat(s, "def");
-println(t);
-```
-
-### Split / array helpers
-
-```thai
-let arr = split("a,b,c", ",");
-println(arraylen(arr));
-println(arrayget(arr, 1));
-```
-
-### JSON
-
-```thai
-let j = jsonnew();
-jsonsetstring(j, "name", "ThaiThon");
-jsonsetint(j, "age", 5);
-println(jsonstringify(j));
-```
-
-หรืออ่านจากไฟล์
-
-```thai
-let doc = jsonreadfile("data.json");
-println(jsongetstring(doc, "name"));
-```
-
-## Project-local lib.json
-
-นอกจาก `lib_header.json` ของ compiler แล้ว ยังสามารถปล่อย `lib.json` ไว้ใน project ของตัวเองได้โดยตรง
+นอกจาก `lib_header.json` ของ compiler แล้ว โปรเจกต์ผู้ใช้สามารถมี `lib.json` ของตัวเองได้โดยตรง โดยไม่ต้องแก้ไฟล์ในโฟลเดอร์ install ของ compiler ทุกครั้ง:
 
 ```text
 myproject/
@@ -494,7 +450,7 @@ myproject/
 ├─ greet.c
 ```
 
-`lib.json`
+`lib.json`:
 
 ```json
 {
@@ -512,76 +468,369 @@ myproject/
 }
 ```
 
-`program.tt`
+`program.tt`:
 
 ```thai
 import "greet";
 greet.hi("ThaiThon");
 ```
 
-> โปรแกรมจะ auto merge `lib.json` กับ `lib_header.json` โดยไม่ต้องแก้ compiler root
+`lib.json` จะถูกค้นหาอัตโนมัติทั้งจาก **current working directory** ที่รัน compiler และจาก **โฟลเดอร์ที่เก็บไฟล์ `.tt`** ที่กำลัง compile (ผ่าน `-i=...`) โดยไม่ต้องใส่ flag เพิ่ม
 
-## ตัวอย่างโปรเจกต์ใน repo
+compiler จะ **merge** `lib.json` เข้ากับ `lib_header.json` โดยใช้หลัก [JSON Merge Patch (RFC 7386)](https://datatracker.ietf.org/doc/html/rfc7386):
 
-### ตัวอย่างพื้นฐาน
+- library key ใหม่ทั้งหมด → ถูกเพิ่มเข้าไปตรง ๆ
+- library key ที่มีอยู่แล้ว → merge แบบ field-by-field: field ที่ไม่ได้พูดถึงจะคงค่าเดิมไว้, field ที่ระบุใหม่ (เช่นเพิ่มฟังก์ชันใน `"functions"`) จะถูก merge เข้าไปโดยไม่กระทบ field อื่นของ library นั้น
+- `"source"` ใน `lib.json` ของ project จะ resolve path แบบ relative กับ **โฟลเดอร์ของไฟล์ `lib.json` เอง** (ไม่ใช่โฟลเดอร์ของ compiler) ทำให้ไฟล์ `.c`/`.cpp` วางไว้ข้าง ๆ `lib.json` ได้เลย
+
+ผลคือ `mymath`/`stdio` มาจาก `lib_header.json` ของ compiler ส่วน `greet` มาจาก `lib.json` ของ project และทั้งสองใช้งานร่วมกันได้ในโปรแกรมเดียวกัน โดยไม่ต้องแก้ไฟล์ของ compiler เลย
+
+---
+
+## FFI: เรียก C/C++ จาก ThaiThon
+
+ฟีเจอร์นี้ทำให้เขียนฟังก์ชัน C/C++ จริง, compile แล้วเรียกจาก ThaiThon ได้ โดยไม่ต้องแก้ lexer/grammar ของภาษาเลย — ใช้ syntax `import "name";` และ `name.func(args);` ที่มีอยู่แล้วเป็นฐาน
+
+### ไฟล์ที่เกี่ยวข้องในซอร์ส
+
+- `src/include/Parser.hpp` — `importStatement()` อ่าน field `"source"` (optional) จาก `lib_header.json`/`lib.json` และจำ path ของไฟล์ C/C++ ที่ต้อง link; `callStatement()` รองรับ `"params"` ต่อฟังก์ชัน ทำให้ส่ง argument ชนิด int/float/string ที่ typed จริง ๆ ได้ ไม่ใช่แค่ string เดี่ยว
+- `src/thaithon.cpp` — เมื่อ `-target=exe` ไฟล์ source ที่ link ทุกไฟล์จะถูก compile ด้วย `clang -c` แล้วนำ `.o` ที่ได้มา link รวมกับ `.o` ของโปรแกรม ThaiThon เป็น executable เดียว
+- `lib_header.json` — มี key เสริม (optional) สองตัวต่อ library คือ `"source"` และ `"params"` (ดูตัวอย่าง entry `mymath`)
+
+### ขั้นตอนการ link ฟังก์ชัน C/C++ ของตัวเอง
+
+1. เขียนฟังก์ชันเป็น C (หรือ C++ ที่ครอบด้วย `extern "C" { ... }`):
+
+   ```c
+   // mymath.c
+   int add_numbers(int a, int b) { return a + b; }
+   ```
+
+2. เพิ่ม entry ใน `lib_header.json` ต่อจาก library เดิม:
+
+   ```json
+   "mymath": {
+     "source": ["mymath.c"],
+     "libs": ["m"],
+     "declare": ["declare i32 @add_numbers(i32, i32)"],
+     "functions": {
+       "add": { "symbol": "add_numbers", "returns": "i32", "params": ["i32", "i32"] }
+     }
+   }
+   ```
+
+3. เรียกใช้จาก ThaiThon:
+
+   ```thai
+   import "mymath";
+   mymath.add(3, 4);
+   ```
+
+4. build โดยเปิด linking:
+
+   ```bash
+   ./bin/thaithon.out -m=c -i=example.tt -target=exe
+   ```
+
+   ขั้นตอนนี้จะ compile `example.tt` เป็น IR, compile `mymath.c` เป็น object file แล้ว link ทั้งสองเข้าด้วยกันเป็น executable เดียว — `-target=ir`/`-target=asm` ยังใช้ได้ปกติแต่จะ **ไม่** auto-link source เพิ่ม (จะมี warning แจ้งเตือน)
+
+### ข้อจำกัดของ FFI (ตั้งใจให้ scope เล็กไว้ก่อน)
+
+- argument ที่ส่งเข้า linked function ต้องเป็น literal (`3`, `"hi"`, `2.5`) — การส่งตัวแปร ThaiThon เข้าไปตรง ๆ ยังไม่รองรับ เพราะ hand-rolled `Parser` นี้ยังไม่ track การ map ตัวแปร → register (ส่วนนั้นอยู่ใน normalizer pipeline แยกต่างหาก คือ `Mono_c11.hpp`)
+- param type ที่รองรับ: `ptr`, `i1/i8/i16/i32/i64`, `float`, `double` — ยังไม่รองรับ struct หรือ pointer-to-struct
+- ถ้า library entry ไม่มี `"params"` ระบบจะใช้พฤติกรรมเดิมแบบ single-string-argument (ทำให้ `lib_header.json` เดิมที่มีแค่ `stdio` ยังใช้งานได้โดยไม่ต้องแก้)
+
+---
+
+## Reverse FFI: เรียก ThaiThon จาก C/C++
+
+compiler จะ emit ฟังก์ชัน ThaiThon ออกมาเป็น LLVM function definition แบบปกติ ทำให้โปรแกรม C/C++ สามารถ link เข้าหา symbol นั้นได้โดยตรง ตราบใดที่ประกาศด้วย ABI ที่ถูกต้อง
+
+1. เขียนฟังก์ชัน ThaiThon:
+
+   ```thai
+   function add(int a, int b) int {
+       return a + b;
+   }
+   ```
+
+2. compile เป็น LLVM IR หรือ object code:
+
+   ```bash
+   ./bin/thaithon.out -m=c -i=export.tt -target=ir
+   llc -filetype=obj export.ll -o export.o
+   ```
+
+   ฟังก์ชันจะถูก emit เป็น LLVM symbol ปกติ เช่น:
+
+   ```llvm
+   define i32 @add(i32 %a, i32 %b) {
+   ...
+   }
+   ```
+
+3. ประกาศจาก C++ ด้วย `extern "C"` แล้วเรียกใช้ (ตัวอย่างจริงจาก `test/part7_reverse_ffi/caller.cpp`):
+
+   ```cpp
+   extern "C" {
+       int add(int a, int b);
+       void greet(const char* name);
+   }
+
+   #include <iostream>
+
+   int main() {
+       int total = add(10, 32);
+       std::cout << "total=" << total << "\n";
+       greet("ThaiThon");
+       return total == 42 ? 0 : 1;
+   }
+   ```
+
+4. link object ทั้งสองเข้าด้วยกัน:
+
+   ```bash
+   g++ main.cpp export.o -o main
+   ```
+
+การทำงานนี้เป็นไปได้เพราะชื่อฟังก์ชันของ ThaiThon ถูก emit เป็น plain LLVM/C symbol ไม่ใช่ชื่อแบบ C++ name-mangled — ถ้าฝั่งเรียกเป็น C++ ต้องครอบ prototype ด้วย `extern "C"` เพื่อกันการ mangle ชื่อ
+
+> ต้องมี LLVM toolchain จริง (`llc`, `clang`, หรือ `opt`) อยู่ใน environment ตอน build object/binary สุดท้าย
+
+---
+
+## คำสั่ง `link`: รวมหลายไฟล์ `.tt`
+
+ThaiThon รองรับคำสั่ง `link` เพื่อผนวกไฟล์ `.tt` อื่นเข้ามาตอน compile
 
 ```thai
 import "stdio";
-println("Hello ThaiThon");
+link "module.tt";
+
+hello();
 ```
 
-### ตัวอย่าง local library
+ไฟล์ `module.tt`:
+
+```thai
+function hello() void {
+    println("Hello from module");
+}
+```
+
+### หลักการ resolve path ของ `link`
+
+`link "module.tt";` จะ resolve path แบบ relative กับ **directory ของไฟล์ `.tt` ที่กำลัง compile อยู่** ไม่ใช่ directory ของตัว compiler หรือ current working directory
+
+โปรเจกต์แยก path ระหว่าง resource ของ compiler กับ resource ของ project ไว้ชัดเจน:
+
+- **`MotherPath`** (compiler root) — ใช้หาไฟล์ที่เป็นของ compiler เอง เช่น `lib_header.json`, `ThaiThonRule.json`
+- **`ProjectPath`** (project directory) — ใช้หาไฟล์ที่เป็นของโปรเจกต์ผู้ใช้ เช่น `link "module.tt"`, `lib.json` ใน project, และ source file ของ library ที่อยู่ในโปรเจกต์
+- ถ้า path เป็น relative ใน project code จะ resolve จากโฟลเดอร์ของไฟล์ `.tt` ที่กำลัง compile
+- ถ้า path เป็น relative ใน compiler-managed resource จะ resolve จาก root ของ compiler
+- สำหรับ resource ที่เรียกจากฝั่ง project ให้ใช้ `exePath` เป็นฐานการค้นหาเมื่อจำเป็น เพื่อไม่ให้ scope ของ compiler resource กับ project resource ปนกัน
+
+> สรุปสั้น: compiler resources → `MotherPath`, user project files → `ProjectPath`/source-file directory, ไม่ปนกัน
+
+ตัวอย่างโครงสร้าง (ตรงกับ `tmp_link/` ในซอร์ส):
+
+```text
+tmp_link/
+├─ main.tt      # import "stdio"; link "module.tt"; hello();
+└─ module.tt    # function hello(): void { print("hi"); return; }
+```
+
+ถ้า `main.tt` อยู่ใน `tmp_link/` แล้วมี `link "module.tt";` มันจะหาไฟล์ที่ `tmp_link/module.tt` ให้อัตโนมัติ และชื่อไฟล์ที่ link ซ้ำกันจะถูก deduplicate ให้เองหากมีการ `link` ไฟล์เดียวกันซ้ำ
+
+---
+
+## ModuleManager: package manager ของ ThaiThon
+
+`ModuleManager` (เขียนด้วย Java, ไฟล์ `src/ModuleManager.java` + `src/Json.java`) เป็นเครื่องมือจัดการ library/module ของ ThaiThon แบบสากล โดย:
+
+- ติดตั้ง module จาก GitHub หรือ Git repository อื่น ๆ ผ่านคำสั่ง `git`
+- เก็บ module ไว้ในโฟลเดอร์ `lib/` ของ compiler (permanent mode) หรือของ project (project mode)
+- ตรวจ version ของ module และความเข้ากันได้กับ compiler ปัจจุบัน
+- รองรับคำสั่ง remove / uninstall / update / search / list / link / help
+
+### โครงสร้างที่เกี่ยวข้อง
+
+```text
+ThaiThon/
+├─ lib/                     # module ของ compiler (permanent mode)
+├─ lib_header.json
+├─ config.json               # เก็บ "version" ของ compiler ปัจจุบัน
+├─ src/
+│  ├─ ModuleManager.java
+│  └─ Json.java
+├─ test/
+│  └─ part8_module_manager/
+│     ├─ module_repo/        # ตัวอย่าง module repo (มี lib.json + greet.c)
+│     └─ project_demo/       # ตัวอย่างโปรเจกต์ที่ใช้ module ผ่าน lib.json
+└─ README_ModuleManager.md
+```
+
+### โหมดการติดตั้ง
+
+**1. permanent mode** — ติดตั้งไว้ใน compiler root:
+
+```bash
+java -cp ./bin ModuleManager install greet --repo=https://github.com/owner/thaithon-greet.git --mode=permanent
+```
+
+ผลลัพธ์: `<compiler_root>/lib/greet/`
+
+**2. project mode** — ติดตั้งสำหรับ project ปัจจุบัน และเขียนลง `lib.json` ของ project:
+
+```bash
+java -cp ./bin ModuleManager install greet --repo=https://github.com/owner/thaithon-greet.git --mode=project
+```
+
+ผลลัพธ์: `<project_root>/lib/greet/` และ `<project_root>/lib.json`
+
+### `lib.json` ที่ module repo ต้องมี
+
+```json
+{
+  "greet": {
+    "name": "greet",
+    "version": "1.0.0",
+    "compilerVersion": "0.0.1",
+    "source": ["greet.c"],
+    "declare": [
+      "declare void @say_hi(ptr)"
+    ],
+    "functions": {
+      "hi": {
+        "symbol": "say_hi",
+        "returns": "void",
+        "params": ["ptr"]
+      }
+    }
+  }
+}
+```
+
+### การตรวจสอบเวอร์ชัน
+
+`ModuleManager` เปรียบเทียบ `compilerVersion` ที่ module ต้องการกับค่า `"version"` ใน `config.json` ของ compiler:
+
+- ถ้า compiler version ปัจจุบัน >= `compilerVersion` ที่ module ต้องการ → ติดตั้งผ่าน
+- ถ้า module ต้องการ compiler version สูงกว่าที่มีอยู่ → หยุดทำงานทันทีพร้อม error message
+
+ตัวอย่างเช่น module ระบุ `"compilerVersion": "1.0.0"` แต่ `config.json` ของเครื่องมี `"version": "0.0.1"` → ติดตั้งไม่ผ่าน
+
+### คำสั่งอื่น ๆ
+
+```bash
+# ค้นหา module
+java -cp ./bin ModuleManager search greet
+
+# อัปเดต module ไปยังเวอร์ชันที่ระบุ
+java -cp ./bin ModuleManager update greet --version=1.1.0
+
+# ลบ module (ใช้ได้ทั้งสอง alias)
+java -cp ./bin ModuleManager uninstall greet
+java -cp ./bin ModuleManager remove greet
+
+# เชื่อม module ที่ติดตั้งแล้วเข้ากับ project ปัจจุบัน
+java -cp ./bin ModuleManager link greet
+
+# แสดงรายการ module ที่ติดตั้งแล้ว
+java -cp ./bin ModuleManager list
+
+# แสดงวิธีใช้งาน
+java -cp ./bin ModuleManager help
+```
+
+### ตัวอย่าง project demo ในซอร์ส
+
+`test/part8_module_manager/project_demo/main.tt`:
 
 ```thai
 import "greet";
+
 greet.hi("ThaiThon");
 ```
 
-### ตัวอย่าง FFI
+`test/part8_module_manager/project_demo/lib.json`:
 
-```thai
-import "mymath";
-let int total = mymath.add(10, 20);
-println(total);
+```json
+{
+  "greet": {
+    "path": "../lib/greet",
+    "version": "1.0.0",
+    "compilerVersion": "0.0.1",
+    "mode": "project"
+  }
+}
 ```
 
-### ตัวอย่าง errors
+`test/part8_module_manager/module_repo/lib.json` คือตัวอย่าง module repo ที่ `ModuleManager` จะ `git clone` แล้วคัดลอกลง `lib/` ให้ทั้งฝั่ง compiler หรือฝั่ง project
 
-```thai
-import "mymath";
-mymath.add("abc", 2);
-```
-
-โค้ดนี้คาดว่าจะ error เพราะ parameter type ไม่ตรง
-
-## ตัวอย่าง command line จริง ๆ
-
-### Compile เป็น IR
+### ทดสอบด้วย local repo (ไม่ต้องพึ่ง remote จริง)
 
 ```bash
-./bin/thaithon.out -m=c -i=example.tt -target=ir
+java -cp ./bin ModuleManager install greet --repo=/path/to/ThaiThon/test/part8_module_manager/module_repo --mode=project
 ```
 
-### Compile เป็น executable
+---
+
+## ThaiThonRule.json: การตั้งค่า lexer/normalizer
+
+`ThaiThonRule.json` ที่ root ของ compiler เป็นไฟล์ config ที่กำหนดพฤติกรรมของ lexer และ normalizer โดยไม่ต้องแก้โค้ด C++ โดยตรงในหลาย ๆ กรณี โครงสร้างหลัก ๆ มีดังนี้:
+
+- **`_config`** — ค่าพื้นฐาน เช่น `enable_char_type`, `keep_newline`, `line_terminator` (ปัจจุบันคือ `;`), `stmt_separator`, `tab_size`
+- **`_error_policy`** — กำหนดว่าแต่ละประเภท error (`invalid_char`, `unclosed_string`, `unknown_token`, ฯลฯ) ให้ `exit` โปรแกรมทันที หรือแค่ `warn`
+- **`lexer.keyword`** — ตาราง keyword ทั้งหมดของภาษา (`import`, `link`, `let`, `const`, `if`, `else`, `while`, `function`/`fn`, `class`, `return`, `print`, `println`, `continue`, `pass`)
+- **`lexer.operator`** — mapping ของ operator เป็น token type เช่น `==` → `EQ`, `!=` → `NEQ`
+- **`lexer.symbol`** — mapping ของ symbol เดี่ยว เช่น `(` → `LPAREN`, `{` → `LBRACE`, `::` → `SCOPE`
+- **`normalizer.collect_brackets` / `collect_delimiters` / `collect_expr_mode` / `collect_types`** — กำหนดว่า normalizer จะ "เก็บ" กลุ่ม token แบบไหนเป็น expression, list, map, function-call, หรือ code-block ตาม bracket และ delimiter ที่พบ
+
+ไฟล์นี้เหมาะสำหรับผู้ที่ต้องการปรับ/ต่อยอด grammar ระดับ token โดยไม่ต้องแก้ `Parser.hpp` โดยตรงในหลายกรณี (เช่น เพิ่ม keyword ใหม่)
+
+---
+
+## ชุดทดสอบ (`test/`) และ `makefile.test`
+
+`makefile.test` เป็น test runner ที่ครอบคลุม part 1–6 (ส่วน part 7 และ part 8 ต้องรันแยกตามขั้นตอนของ FFI/ModuleManager ด้านบน):
 
 ```bash
-./bin/thaithon.out -m=c -i=example.tt -target=exe
+make -f makefile.test build   # build compiler ก่อน
+make -f makefile.test part1   # import + print พื้นฐาน (target=ir)
+make -f makefile.test part2   # stdio library (target=ir)
+make -f makefile.test part3   # local lib ผ่าน project lib.json (target=exe)
+make -f makefile.test part4   # FFI เรียก mymath.add (target=exe)
+make -f makefile.test part5   # ผสม stdio + mymath ในไฟล์เดียว (target=exe)
+make -f makefile.test part6   # ตัวอย่างที่ตั้งใจให้ error เพราะ type ไม่ตรง (target=ir)
+make -f makefile.test all     # รันทุก part ตามลำดับ
 ```
 
-### Compile พร้อม link file อื่น
+สรุปแต่ละ part:
 
-```bash
-./bin/thaithon.out -m=c -i=project/main.tt -target=exe
-```
+| Part | โฟลเดอร์ | สิ่งที่ทดสอบ |
+|---|---|---|
+| 1 | `test/part1_basic/` | `import "stdio"; stdio.print(...)` พื้นฐาน, target `ir` |
+| 2 | `test/part2_stdio/` | ตัวอย่าง stdio library เพิ่มเติม, target `ir` |
+| 3 | `test/part3_local_lib/` | project-local `lib.json` + `greet.c`, target `exe` |
+| 4 | `test/part4_ffi/` | เรียก `mymath.add(10, 20)` ผ่าน FFI, target `exe` |
+| 5 | `test/part5_mixed/` | ใช้ทั้ง `stdio` และ `mymath` ในไฟล์เดียว, target `exe` |
+| 6 | `test/part6_errors/` | `mymath.add("abc", 2)` — คาดหวังให้ compile error เพราะ argument ผิด type |
+| 7 | `test/part7_reverse_ffi/` | reverse FFI: `export.tt` ถูกเรียกจาก `caller.cpp` |
+| 8 | `test/part8_module_manager/` | ทดสอบ `ModuleManager` ทั้ง module repo และ project demo |
+
+---
 
 ## ข้อจำกัดที่ควรรู้
 
 - `&&` / `||` ยังไม่รองรับแบบเต็ม
-- การเรียก FFI function ยังจำกัดให้ pass literal หรือ operand ที่ compile-time สามารถตีค่าได้
-- `class` ยังไม่มี method หรือ inheritance
-- ไม่มี garbage collector หรือ memory management แบบเต็ม
-- `-target=ir` และ `-target=asm` จะไม่ auto-link C/C++ source files ตามตัวอย่างเดียวกับ `-target=exe`
-- `string` และ `json` ในระดับ IR มักถูกแปลงเป็น pointer จึงต้องใช้ helper functions อย่าง `strconcat`, `jsonset*`, `jsonget*`
+- argument ที่ส่งเข้า FFI function ยังจำกัดให้เป็น literal หรือ operand ที่ compile-time ตีค่าได้เท่านั้น (ยังส่งตัวแปรตรง ๆ ไม่ได้)
+- `class` ยังไม่มี method หรือ inheritance — มีแค่ field
+- ไม่มี garbage collector หรือระบบจัดการหน่วยความจำแบบเต็มรูปแบบ
+- `-target=ir` และ `-target=asm` จะไม่ auto-link ไฟล์ source C/C++ เหมือนกับ `-target=exe`
+- `string` และ `json` ในระดับ LLVM IR มักถูกแทนด้วย pointer จึงต้องใช้ helper function เช่น `strconcat`, `jsonset*`, `jsonget*` แทนการดำเนินการตรง ๆ
+
+---
 
 ## การแก้ปัญหาเบื้องต้น
 
@@ -591,13 +840,11 @@ mymath.add("abc", 2);
 [Error] Linked file not found: /path/to/project/module.tt
 ```
 
-สาเหตุส่วนใหญ่คือ path resolution ใช้ผิดโฟลเดอร์
+สาเหตุส่วนใหญ่คือ path resolution ชี้ผิดโฟลเดอร์ แก้ไขโดย:
 
-แก้ไขได้โดย:
-
-- ให้ `link` resolve relative กับ directory ของไฟล์ `.tt` ที่กำลังคอมไพล์
-- ใช้ `lexically_normal` หรือ normalize path ก่อนเปิดไฟล์
-- ตรวจสอบว่า `module.tt` อยู่ใน directory เดียวกับ `main.tt`
+- ตรวจว่า `link` ใช้ path แบบ relative กับโฟลเดอร์ของไฟล์ `.tt` ที่กำลัง compile จริง
+- normalize path ก่อนเปิดไฟล์ (เช่นใช้ `lexically_normal`)
+- ตรวจว่า `module.tt` อยู่ในโฟลเดอร์เดียวกับ `main.tt` ตามที่ตั้งใจไว้
 
 ### Error: cannot open input file
 
@@ -605,11 +852,11 @@ mymath.add("abc", 2);
 [Error] Cannot open input file: main.tt
 ```
 
-ตรวจดูว่าพาธที่ส่งเข้ามาถูกต้องหรือยัง เช่น `-i=tmp_link/main.tt` หรือ `-i=tmp_link\main.tt`
+ตรวจว่า path ที่ส่งเข้า `-i=...` ถูกต้อง เช่น `-i=tmp_link/main.tt` (Linux/macOS) หรือ `-i=tmp_link\main.tt` (Windows)
 
 ### Error: LLVM tools not found
 
-ตรวจว่า `clang`, `llc`, `opt` อยู่ใน PATH แล้ว
+ตรวจว่า `clang`, `llc`, `opt` อยู่ใน `PATH`:
 
 ```bash
 which clang
@@ -617,7 +864,7 @@ which llc
 which opt
 ```
 
-หรือบน Windows
+หรือบน Windows PowerShell:
 
 ```powershell
 Get-Command clang
@@ -625,24 +872,28 @@ Get-Command llc
 Get-Command opt
 ```
 
+---
+
+## License
+
+ในซอร์สโค้ดปัจจุบันยังไม่มีไฟล์ license (เช่น `LICENSE`/`LICENSE.md`) แนบมาด้วย หากต้องการเผยแพร่หรือใช้งานต่อในเชิงพาณิชย์ ควรติดต่อผู้ดูแล repo เพื่อยืนยันเงื่อนไขการใช้งานก่อน
+
+---
+
 ## สรุป
 
-ThaiThon เป็นภาษาแบบง่าย ๆ ที่ออกแบบให้
+ThaiThon เป็นภาษาขนาดเล็กที่ออกแบบมาให้:
 
-- คอมไพล์เป็น LLVM IR
-- เรียก library C/C++ ได้ตรง ๆ
-- ใช้ `link` เชื่อมไฟล์ ThaiThon หลายไฟล์ได้
-- ใช้ `lib.json` / `lib_header.json` สำหรับ management library
-- เหมาะกับโครงการภาษาเล็ก ๆ ที่ต้องการโครงสร้างแบบประกาศฟังก์ชัน/คลาส/จัดการ I/O
+- คอมไพล์เป็น LLVM IR แล้วต่อยอดเป็น asm/executable ได้จริง
+- เรียก library C/C++ ได้ตรง ๆ ผ่านระบบ FFI สองทาง
+- ใช้ `link` เชื่อมไฟล์ ThaiThon หลายไฟล์เข้าด้วยกันได้
+- มี `lib.json` / `lib_header.json` สำหรับจัดการ library ทั้งระดับ compiler และระดับ project
+- มี `ModuleManager` เป็น package manager ของตัวเองแบบ Git-based
 
-หากต้องการทำโปรเจกต์ต่อ สามารถเริ่มจาก:
+หากต้องการเริ่มทำโปรเจกต์ต่อ แนะนำลำดับดังนี้:
 
 1. สร้างไฟล์ `.tt`
-2. `import` library ที่ต้องการ
-3. ใช้ `link` สำหรับไฟล์ย่อย
+2. `import` library ที่ต้องการ (จาก `lib_header.json` หรือ `lib.json` ของ project)
+3. ใช้ `link` เพื่อแยกไฟล์ย่อยตามต้องการ
 4. Compile ด้วย `-target=exe`
-5. ทำ C/C++ FFI ถ้าต้องการขยายระบบ
-
-## หมายเหตุ
-
-โครงการนี้ออกแบบให้เป็น compiler front-end + LLVM IR backend แบบตั้งแต่ตัวเอง โดยเฉพาะส่วนจัดการ `link` และ `FFI` ได้ถูกปรับให้ใช้งานได้จริงในโฟลเดอร์โปรเจกต์และไฟล์เอกสารต่าง ๆ
+5. ถ้าต้องขยายระบบ ให้เขียน C/C++ FFI เพิ่ม หรือใช้ `ModuleManager` เพื่อดึง module จาก Git repository อื่น
