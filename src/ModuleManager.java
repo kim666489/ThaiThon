@@ -210,7 +210,7 @@ public class ModuleManager {
                 if (version == null || version.equals(metadata.version)) {
                     System.out.println("Module already installed: " + metadata.name + " @ " + metadata.version);
                     if ("project".equals(mode)) {
-                        linkModuleToProject(metadata.name, installDir, metadata.version, requiredCompilerVersion);
+                        linkModuleToProject(metadata.name, installDir, metadata.version, requiredCompilerVersion, mode);
                     }
                     return;
                 }
@@ -218,7 +218,7 @@ public class ModuleManager {
                 // so a failed copy can never leave the module missing.
                 replaceInstalledModule(installDir, metadata);
                 if ("project".equals(mode)) {
-                    linkModuleToProject(metadata.name, installDir, metadata.version, requiredCompilerVersion);
+                    linkModuleToProject(metadata.name, installDir, metadata.version, requiredCompilerVersion, mode);
                 }
                 System.out.println("Installed module: " + metadata.name + " @ " + metadata.version + " into " + installDir);
                 return;
@@ -228,7 +228,7 @@ public class ModuleManager {
             writeModuleIndex(metadata, installDir);
 
             if ("project".equals(mode)) {
-                linkModuleToProject(metadata.name, installDir, metadata.version, requiredCompilerVersion);
+                linkModuleToProject(metadata.name, installDir, metadata.version, requiredCompilerVersion, mode);
             }
 
             System.out.println("Installed module: " + metadata.name + " @ " + metadata.version + " into " + installDir);
@@ -388,7 +388,8 @@ public class ModuleManager {
         }
 
         ModuleMetadata metadata = readInstalledMetadata(installPath);
-        linkModuleToProject(metadata.name, installPath, metadata.version, metadata.compilerVersion);
+        String actualMode = detectInstallMode(installPath);
+        linkModuleToProject(metadata.name, installPath, metadata.version, metadata.compilerVersion, actualMode);
         System.out.println("Linked module " + metadata.name + " to project: " + ProjectRoot);
     }
 
@@ -673,7 +674,13 @@ public class ModuleManager {
         return md;
     }
 
-    private static void linkModuleToProject(String moduleName, Path installDir, String version, String compilerVersion) throws IOException {
+    // BUG-13 fix: this used to hardcode "mode": "permanent" into every
+    // project lib.json entry, even when the module was actually installed
+    // with --mode=project (or explicitly `link`-ed from a project-local
+    // copy). That contradicted README_ModuleManager.md's own example and
+    // left false data in lib.json for anything that reads the "mode"
+    // field. The caller must now pass the real mode.
+    private static void linkModuleToProject(String moduleName, Path installDir, String version, String compilerVersion, String mode) throws IOException {
         Files.createDirectories(ProjectRoot);
         Json.Node root = Files.exists(ProjectLibFile) ? Json.parse(Files.readString(ProjectLibFile, StandardCharsets.UTF_8)) : Json.object();
         if (!root.isObject()) {
@@ -684,10 +691,23 @@ public class ModuleManager {
             .put("path", installDir.toString())
             .put("version", version)
             .put("compilerVersion", compilerVersion)
-            .put("mode", "permanent");
+            .put("mode", "project".equals(mode) ? "project" : "permanent");
 
         root.put(moduleName, entry);
         Files.writeString(ProjectLibFile, root.toPrettyString(2), StandardCharsets.UTF_8);
+    }
+
+    // BUG-13 fix helper: figures out whether an already-installed module
+    // directory actually lives under the project-local lib/ or the
+    // compiler-permanent lib/, by comparing real paths rather than
+    // trusting a caller-supplied flag that may not match reality.
+    private static String detectInstallMode(Path installPath) throws IOException {
+        Path real = installPath.toRealPath();
+        Path projectLib = ProjectRoot.resolve("lib");
+        if (Files.exists(projectLib) && real.startsWith(projectLib.toRealPath())) {
+            return "project";
+        }
+        return "permanent";
     }
 
     private static void removeProjectLink(String moduleName) throws IOException {
@@ -750,17 +770,43 @@ public class ModuleManager {
             "Pass --repo=<git-url> (e.g. --repo=https://github.com/<owner>/" + moduleName + ".git) explicitly.");
     }
 
+    // BUG-14 fix: an unauthenticated call to the GitHub Search API is
+    // capped at 60 requests/hour per IP and used to fail silently (empty
+    // result, no explanation) once that was hit. We now reuse whatever
+    // GitHub credentials are already set up locally for `git` itself
+    // (env var, `gh` CLI login, or the git credential helper backing
+    // `git clone`/`git push` for github.com) so the same request runs
+    // authenticated instead, which raises the limit to 5000 requests/hour.
+    // If no local credential can be found we fall back to the old
+    // anonymous call, but now report *why* a failure happened instead of
+    // just returning an empty list.
     private static List<String> searchGitHubRepositories(String keyword) throws Exception {
         String query = "ThaiThon+" + keyword.trim().replace(" ", "+");
         String url = "https://api.github.com/search/repositories?q=" + query + "&per_page=5";
         HttpClient client = HttpClient.newHttpClient();
-        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-            .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "ThaiThon-ModuleManager")
-            .build();
 
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(URI.create(url))
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "ThaiThon-ModuleManager");
+
+        String token = findLocalGitHubToken();
+        if (token != null && !token.isBlank()) {
+            requestBuilder.header("Authorization", "Bearer " + token.trim());
+        } else if (debug) {
+            System.err.println("[Warn] No local GitHub credential found (checked GITHUB_TOKEN/GH_TOKEN, " +
+                "'gh auth token', and the git credential helper for github.com); searching anonymously, " +
+                "which is limited to 60 requests/hour.");
+        }
+
+        HttpResponse<String> response = client.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 403 || response.statusCode() == 429) {
+            System.err.println("[Warn] GitHub search rate-limited (HTTP " + response.statusCode() + "). " +
+                (token == null ? "Log in with `gh auth login` or set GITHUB_TOKEN to raise the limit."
+                                : "Even the authenticated quota was exhausted; try again later."));
+            return List.of();
+        }
         if (response.statusCode() != 200) {
+            System.err.println("[Warn] GitHub search failed (HTTP " + response.statusCode() + ").");
             return List.of();
         }
 
@@ -776,6 +822,95 @@ public class ModuleManager {
             }
         }
         return names;
+    }
+
+    /**
+     * BUG-14 fix helper: looks for a GitHub token the way `git` itself
+     * would already have one available on this machine, in priority order:
+     *   1. GITHUB_TOKEN / GH_TOKEN environment variables
+     *   2. `gh auth token` (GitHub CLI), if `gh` is installed and logged in
+     *   3. the git credential helper's stored password for github.com
+     *      (the same store `git clone https://github.com/...` uses)
+     * Returns null if none of these yield a token; every step fails soft
+     * (never throws) since this is a best-effort convenience lookup.
+     */
+    private static String findLocalGitHubToken() {
+        for (String envVar : new String[]{"GITHUB_TOKEN", "GH_TOKEN"}) {
+            String fromEnv = System.getenv(envVar);
+            if (fromEnv != null && !fromEnv.isBlank()) {
+                return fromEnv;
+            }
+        }
+
+        String fromGhCli = runCommandForFirstLine(List.of("gh", "auth", "token"));
+        if (fromGhCli != null && !fromGhCli.isBlank()) {
+            return fromGhCli;
+        }
+
+        return readGitCredentialPassword("github.com");
+    }
+
+    /**
+     * Runs `git credential fill` for the given host, the exact same
+     * mechanism `git` uses before an HTTPS clone/push, and extracts the
+     * "password=" line (which is the personal access token for GitHub
+     * when a credential helper such as the OS keychain, osxkeychain,
+     * wincred, or `gh`'s own credential helper is configured).
+     */
+    private static String readGitCredentialPassword(String host) {
+        try {
+            ProcessBuilder builder = new ProcessBuilder("git", "credential", "fill");
+            builder.redirectErrorStream(false);
+            Process process = builder.start();
+            String input = "protocol=https\nhost=" + host + "\n\n";
+            process.getOutputStream().write(input.getBytes(StandardCharsets.UTF_8));
+            process.getOutputStream().flush();
+            process.getOutputStream().close();
+
+            String output;
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    sb.append(line).append('\n');
+                }
+                output = sb.toString();
+            }
+            boolean finished = process.waitFor(5, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                return null;
+            }
+
+            for (String line : output.split("\n")) {
+                if (line.startsWith("password=")) {
+                    return line.substring("password=".length());
+                }
+            }
+        } catch (Exception ignored) {
+            // No credential helper configured, git not on PATH, etc. — fine, just means no token.
+        }
+        return null;
+    }
+
+    private static String runCommandForFirstLine(List<String> command) {
+        try {
+            ProcessBuilder builder = new ProcessBuilder(command);
+            builder.redirectErrorStream(false);
+            Process process = builder.start();
+            String firstLine;
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                firstLine = reader.readLine();
+            }
+            boolean finished = process.waitFor(5, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                return null;
+            }
+            return process.exitValue() == 0 ? firstLine : null;
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     /**

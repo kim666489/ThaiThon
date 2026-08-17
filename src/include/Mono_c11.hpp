@@ -841,7 +841,7 @@ inline std::string detect_token_type(const Token& token) {
     if (operators.count(t)) return "operator";
     static const std::set<std::string> brackets = {"LPAREN", "RPAREN", "LBRACKET", "RBRACKET", "LBRACE", "RBRACE"};
     if (brackets.count(t)) return "bracket";
-    static const std::set<std::string> delims = {"COMMA", "SEMICOLON", "COLON"};
+    static const std::set<std::string> delims = {"COMMA", "SEMICOLON", "COLON", "SCOPE", "HASH"};
     if (delims.count(t)) return "delimiter";
     if (t == "NEWLINE") return "newline";
     if (t == "EOF") return "eof";

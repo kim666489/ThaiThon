@@ -19,6 +19,7 @@
     "lexer": {
         "keyword": {
             "import":"import",
+            "include":"include",
             "link":"link",
             "let":"let",
             "const":"const",
@@ -48,10 +49,12 @@
             ">=": "GTE"
         },
         "symbol": {
+            "#": "HASH",
             "(": "LPAREN",
             ")": "RPAREN",
             ",": "COMMA",
             ".": "DOT",
+            "::": "SCOPE",
             ":": "COLON",
             ";": "SEMICOLON",
             "[": "LBRACKET",

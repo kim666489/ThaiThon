@@ -298,8 +298,10 @@ private:
         Token t = this->current();
 
         if (t.type == "NEWLINE") { this->advance(); return; }
+        if (t.type == "HASH") { this->includeStatement(); return; }
 
         if (t.type == "import" || this->atKeyword("import")) { this->importStatement(); return; }
+        if (this->atKeyword("include")) { this->includeStatement(); return; }
         if (this->atKeyword("link")) { this->linkStatement(); return; }
         if (this->atKeyword("let")) { this->letStmt(false); return; }
         if (this->atKeyword("const")) { this->letStmt(true); return; }
@@ -318,13 +320,16 @@ private:
         if (t.type == "IDENTIFIER") {
             Token n1 = this->peekAt(1);
             if (n1.type == "DOT") {
-                Token n3 = this->peekAt(3);
                 string moduleName = t.value.get<string>();
                 if (this->findVar(moduleName)) {
                     this->fieldAssignStatement();
                     return;
                 }
                 // otherwise: imported-library call, e.g. stdio.print("hi");
+                this->callStatement();
+                return;
+            }
+            if (n1.type == "SCOPE") {
                 this->callStatement();
                 return;
             }
@@ -821,6 +826,9 @@ private:
                 if (this->findVar(name)) return this->parseFieldRead(name);
                 return this->parseModuleCallExpr(name);
             }
+            if (n1.type == "SCOPE") {
+                return this->parseModuleCallExpr(name);
+            }
 
             // plain variable load
             this->advance();
@@ -1184,6 +1192,17 @@ private:
         }
     }
 
+    void includeStatement() {
+        if (this->current().type == "HASH") this->advance();
+        if (this->atKeyword("include")) this->advance();
+
+        while (this->current().type != "NEWLINE" && this->current().type != "SEMICOLON" &&
+               this->current().type != "EOF") {
+            this->advance();
+        }
+        if (this->current().type == "NEWLINE") this->advance();
+    }
+
     void linkStatement() {
         this->advance(); // 'link'
         this->expart_type("STRING", "link path is not STRING type");
@@ -1230,7 +1249,9 @@ private:
         string moduleName = this->current().value.get<string>();
         int callLine = this->current().line, callCol = this->current().col;
         this->advance();
-        this->expart_type("DOT", "Expected '.' after module name '" + moduleName + "'");
+        if (this->current().type != "DOT" && this->current().type != "SCOPE") {
+            this->error("Expected '.' or '::' after module name '" + moduleName + "'");
+        }
         this->advance();
 
         static const vector<string> nonNameTypes = {
