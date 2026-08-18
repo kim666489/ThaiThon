@@ -455,9 +455,8 @@ void RunCompiler() {
     vector<fs::path> externSources;
     vector<string> externLibs;
     try {
-        // NEW: folder holding the .tt file being compiled, so Parser can
-        // also look for a project-local "lib.json" there (in addition to
-        // the current working directory it already checks).
+        // Project files resolve relative to the directory of the input source,
+        // while compiler resources remain anchored to the compiler root.
         fs::path projectDir = fs::absolute(fs::path(inputPath)).parent_path();
         Parser parser(tokens, exePath, projectDir);
         parser.run(irPath);

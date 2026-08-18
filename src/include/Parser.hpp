@@ -208,9 +208,9 @@ public:
     Parser(vector<Token> _tokens, fs::path _rootPath, fs::path _projectDir = fs::path())
         : writer("thaithon_module") {
         this->tokens = _tokens;
-        this->RootPath = _rootPath.lexically_normal();
-        this->MotherPath = this->RootPath;            // compiler-owned resources live here
-        this->ProjectPath = _projectDir.empty() ? this->RootPath : _projectDir.lexically_normal();
+        this->RootPath = fs::absolute(_rootPath).lexically_normal();
+        this->MotherPath = this->RootPath; // compiler-owned resources stay rooted here
+        this->ProjectPath = _projectDir.empty() ? this->RootPath : fs::absolute(_projectDir).lexically_normal();
 
         fs::path libPath = this->MotherPath / "lib_header.json";
         ifstream libfile(libPath);
@@ -220,10 +220,10 @@ public:
         }
         libfile >> this->lib_header;
 
-        fs::path cwd = fs::current_path();
-        this->mergeProjectLibFile(cwd);
-        if (!_projectDir.empty() && fs::absolute(_projectDir) != fs::absolute(cwd)) {
-            this->mergeProjectLibFile(_projectDir);
+        // User project files and compiler-owned files must not share the same search scope.
+        // Only the active project directory is considered for project-local lib.json merging.
+        if (!this->ProjectPath.empty()) {
+            this->mergeProjectLibFile(this->ProjectPath);
         }
 
         this->registerBuiltins();
